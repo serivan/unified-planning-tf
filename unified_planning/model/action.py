@@ -27,7 +27,9 @@ from unified_planning.exceptions import (
     UPProblemDefinitionError,
     UPUsageError,
 )
+
 from unified_planning.model.mixins.timed_conds_effs import TimedCondsEffs
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Set, Union, Optional, Iterable
 from collections import OrderedDict
@@ -299,6 +301,12 @@ class InstantaneousAction(Action):
 
         :param precondition: The expression that must be added to the `action's preconditions`.
         """
+        if False and precondition.node_type == up.model.OperatorKind.AND: #III
+            for arg in precondition.args:
+                self._environment = arg.environment
+                self.add_precondition(arg)
+            return
+
         (precondition_exp,) = self._environment.expression_manager.auto_promote(
             precondition
         )

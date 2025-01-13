@@ -473,3 +473,6 @@ class FNode(object):
 
     def Iff(self, right):
         return self._env.expression_manager.Iff(self, right)
+
+    def get_name(self):
+        return self.__repr__()
