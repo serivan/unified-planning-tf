@@ -280,7 +280,7 @@ class TfAction(TensorAction):
             if(fl_name in self.curr_state):
                 value=self.curr_state[fl_name]
             else:
-                value=TF_ZERO
+                value=tf.constant(0.0) #tf.Variable(0.0, dtype=tf.float32, trainable=False) #TF_ZERO
 
             result= tf.multiply(tf.cast(effect.value.bool_constant_value(), tf.float32 ), self.get_are_preconditions_satisfied()) 
             result1=tf.multiply(value, (1.0-self.get_are_preconditions_satisfied()))
@@ -292,7 +292,10 @@ class TfAction(TensorAction):
             self.new_state[fl_name]=(result+result1) #TfFluent( effect.fluent,result+result1)
                 
         else:
-            result =self._converter.compute_effect_value(effect, self.get_are_preconditions_satisfied()) 
+            if (effect.is_sympy_expression_inserted()):
+                result =self._converter.compute_effect_value(effect, 1) 
+            else:
+                result =self._converter.build_compute_effect_value(effect, 1)
             if DEBUG>4:
                 print("-->",fl_name,"- init:",self.new_state[fl_name], " delta:", result-self.new_state[fl_name], " new: ", result)
             self.new_state[fl_name]=(result) #TfFluent( effect.fluent,result)

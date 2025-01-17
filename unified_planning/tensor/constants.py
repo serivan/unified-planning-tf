@@ -8,7 +8,7 @@ DEBUG = 0
 # Define constants
 EPSILON=1e-7  #tf.keras.backend.epsilon()
 TENSOR_EPSILON = 1e-6
-#ARE_PREC_SATISF_STR='are_preconditions_satisfied'
+ARE_PREC_SATISF_STR='ARE_PREC_SATISFIED'
 
 TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu

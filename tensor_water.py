@@ -106,14 +106,11 @@ os.sync()
 
 @tf.function
 def execute(plan, initial_state):
-  start_time = time.time()
-  DEBUG=1
   result= plan.forward(initial_state)
-  end_time = time.time()
-  print("Forward:", end_time - start_time, "seconds, result: ", result)
   state=plan.get_final_state()
-  print("Objective function: ", state["objective"] )
+  tf.print("Objective function: ", state["objective"] )
   print()
+  return result
 
 
 initial_state={}
@@ -124,15 +121,25 @@ end_time = time.time()
 print("Creation time of act_sequence:", end_time - start_time, "seconds")
 os.sync()
 start_time = time.time()
-DEBUG=1
+#DEBUG=6
 result= seq_plan.forward(initial_state)
+#result= 0
 end_time = time.time()
 print("Forward1:", end_time - start_time, "seconds, result: ", result)
+
+state=seq_plan.get_final_state()
+print("Objective function: ", state["objective"] )
 #exit()
 
+start_time = time.time()
 execute(seq_plan, initial_state)
+end_time = time.time()
+tf.print("Forward:", end_time - start_time, "seconds, result: ", result)
 
+start_time = time.time()
 execute(seq_plan, initial_state)
+end_time = time.time()
+tf.print("Forward:", end_time - start_time, "seconds, result: ", result)
 
 
 os.sync()

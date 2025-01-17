@@ -77,6 +77,9 @@ class Effect:
         )
         free_vars.update(fvo.get_free_variables(value))
         free_vars.update(fvo.get_free_variables(condition))
+        self.sympy_expr_sat=None
+        self.sympy_expr_unsat=None
+        self.sympy_expr_inserted=0.0
 
         def free_vars_without_duplicates() -> Iterator["up.model.variable.Variable"]:
             # store seen variables to avoid duplicates
@@ -244,6 +247,14 @@ class Effect:
     def is_decrease(self) -> bool:
         """Returns `True` if the :func:`kind <unified_planning.model.Effect.kind>` of this `Effect` is a `decrease`, `False` otherwise."""
         return self._kind == EffectKind.DECREASE
+
+    def insert_sympy_expression(self, sympy_expr_sat, sympy_expr_unsat):
+        self.sympy_expr_sat=sympy_expr_sat
+        self.sympy_expr_unsat=sympy_expr_unsat
+        self.sympy_expr_inserted=1.0
+    
+    def is_sympy_expression_inserted(self):
+        return self.sympy_expr_inserted==1.0
 
 
 class SimulatedEffect:
