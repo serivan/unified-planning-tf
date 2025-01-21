@@ -37,9 +37,9 @@ class TensorAction(ABC):
         #        raise UPUsageError(msg)
         #    else:
         #        warn(msg)
-        self._grounder = GrounderHelper(problem)
+        self._grounder = GrounderHelper(problem,prune_actions=False)
         self._plan_action =  plan_action
-        grounded_action = self._grounder.ground_action(plan_action._action, plan_action.actual_parameters)
+        grounded_action = self._grounder.ground_action(plan_action._action, plan_action.actual_parameters )
         if grounded_action is None:
             raise UPInvalidActionError("Apply_unsafe got an inapplicable action.")
         self._up_action = grounded_action # Store the action
@@ -90,14 +90,32 @@ class TensorAction(ABC):
         #curr_state[ARE_PREC_SATISF_STR].assign(self._are_preconditions_satisfied)
         #new_state[ARE_PREC_SATISF_STR]=self._are_preconditions_satisfied #UPDATE temporarily also in new_state since the converter works on new_state
 
-
-        if self._are_preconditions_satisfied<=0:
-            if DEBUG>0:
-                print("Preconditions not satisfied, action id: ", self._action_id)
-
-
         # Apply effects if preconditions are satisfied
         self.apply_effects()
+
+        # Update the metric value if the preconditions are not satisfied
+        metric=self.problem.quality_metrics[0]
+        metric_value = tf.cond(
+            tf.greater(self._are_preconditions_satisfied, 0.0),
+            lambda: self.new_state[str(metric.expression)] ,# Default or alternative value
+            lambda: self.new_state[str(metric.expression)] + 50000.0 
+        )
+        self.new_state[str(metric.expression)]=metric_value
+        #if self._are_preconditions_satisfied<=0:
+        #    metric=self.problem.quality_metrics[0]
+        #    metric_value = self.curr_state[str(metric.expression)]+ 100.0 #(UNSAT_PENALTY * self._are_preconditions_satisfied)
+        #    self.new_state[str(metric.expression)]=metric_value
+
+        if DEBUG>0:
+            if self._are_preconditions_satisfied<=0:    
+                print("Preconditions not satisfied, action id: ", self._action_id, " name: ", self.get_name())
+            else:
+                print("Preconditions satisfied, action id: ", self._action_id, " name: ", self.get_name())
+            print("Metric value: ", metric_value)
+            print()
+
+
+
         if DEBUG>5:
             print("State after action:", end=":: ")
             TensorState.print_filtered_dict_state(self.new_state,["next"])
@@ -234,7 +252,6 @@ class TfAction(TensorAction):
             #sympy_expr = sp.sympify(value_str)
             return value #self._converter.convert(sympy_expr)
 
-
     def apply_effects(self):
         """
         Apply the effects of the action to the new state.
@@ -247,7 +264,7 @@ class TfAction(TensorAction):
         #self._converter = self._converter_funct(curr_state, self)#  converter (SympyToTensorConverter): The converter instance for SymPy to TensorFlow conversion.
    
         for effect in effects:
-            if DEBUG>7:
+            if DEBUG>5:
                 print("Applying effect:", effect)
             result=1.0
             if effect.is_conditional():
@@ -282,8 +299,9 @@ class TfAction(TensorAction):
             else:
                 value=tf.constant(0.0) #tf.Variable(0.0, dtype=tf.float32, trainable=False) #TF_ZERO
 
-            result= tf.multiply(tf.cast(effect.value.bool_constant_value(), tf.float32 ), self.get_are_preconditions_satisfied()) 
-            result1=tf.multiply(value, (1.0-self.get_are_preconditions_satisfied()))
+            are_preconditions_satisfied=1.0 #self.get_are_preconditions_satisfied()
+            result= tf.multiply(tf.cast(effect.value.bool_constant_value(), tf.float32 ), are_preconditions_satisfied) 
+            result1=tf.multiply(value, (1.0- are_preconditions_satisfied))
             #result1=tf.multiply(self.new_state[fl_name].get_value(), (1.0-self.get_are_preconditions_satisfied())) # tf.constant(effect.value.bool_constant_value(), tf.float32, name=f"{fl_var_name}_{self.get_action_id()}")
 
             if DEBUG>4:

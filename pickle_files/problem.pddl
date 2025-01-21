@@ -253,7 +253,7 @@
     (= (flow_beta input_hoa_binh day_2001_09_30) 1512)
     (= (flow_beta yen_bai_station day_2001_09_30) 707)
     (= (flow_beta vu_quang_station day_2001_09_30) 634)
-    (= (agricultural_demand day_2001_10_01) 370)
+    (= (agricultural_demand day_2001_10_01) 3700)
     (= (flow_beta input_hoa_binh day_2001_10_01) 1430)
     (= (flow_beta yen_bai_station day_2001_10_01) 692)
     (= (flow_beta vu_quang_station day_2001_10_01) 626)

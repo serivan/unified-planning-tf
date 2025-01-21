@@ -257,7 +257,7 @@ class SympyToTensorConverter(ABC):
             TensorFlow/Torch Tensor: The resulting tensor.
         """
         node_name=str(node)
-        if(DEBUG>5):
+        if(DEBUG>4):
             print("..tensor_convert: ", node_name)
         if isinstance(node, sympy.Symbol):
             # Look up the symbol in the state and return its value
@@ -272,15 +272,13 @@ class SympyToTensorConverter(ABC):
                 value=self.state[node_name]
             else:
                 value= tf.constant(0.0) # tf.Variable(0.0, dtype=tf.float32, trainable=False) #TF_ZERO
-            if DEBUG>5:
-                print(node_name,":= ", value)
-            return value
+            
         elif isinstance(node, sympy.Number):
             if self.is_tensor(node):
-                return node
+                value= node
             else:
                 # Return the number as a TensorFlow/Torch constant
-                return self.get_constant(node) 
+                value= self.get_constant(node) 
         elif isinstance(node, sympy.Basic):
             # Handle basic SymPy operations (Add, Mul, Pow, etc.)
             if isinstance(node, sympy.Add):
@@ -288,30 +286,33 @@ class SympyToTensorConverter(ABC):
                 
                 result=tf.add_n([arg for arg in args])
                 #result= lambda: (tf.add_n([arg() if callable(arg) else arg for arg in args]), args)
-                return result
+                value= result
             elif isinstance(node, sympy.Mul):
                 args = [self._tensor_convert(arg, are_prec_satisfied) for arg in node.args]
                 
                 result=1.0
                 for arg in args:
                     result *= arg
-                return result
+                value= result
             elif isinstance(node, sympy.Pow):
                 func = self.sympy_to_tensor_map.get(type(node))
                 base, exp = [self._tensor_convert(arg, are_prec_satisfied) for arg in node.args]
-                return func(base, exp)
+                value= func(base, exp)
             elif  node_name in self.state:
                 value = self.state[node_name]
-                return value
             else:
                 func = self.sympy_to_tensor_map.get(type(node))
                 if func:
-                    return func(*[self._tensor_convert(arg, are_prec_satisfied) for arg in node.args])
+                    value= func(*[self._tensor_convert(arg, are_prec_satisfied) for arg in node.args])
                 else:
 
                     raise ValueError(f"Unsupported operation: {type(node)}")
         else:
             raise ValueError(f"Unsupported node type: {type(node)}")
+
+        if DEBUG>5:
+            print(node_name,":= ", value)
+        return value
 
     @abstractmethod
     def negativeRelu(self, x):
@@ -355,7 +356,9 @@ class SympyToTfConverter(SympyToTensorConverter):
         return (-1.0)*tf.keras.activations.relu(-x)
     
     def get_constant(self, node): 
-        return tf.constant(float(node), dtype=tf.float32)
+        #tf.print("Node: ", node)
+        return float(node)
+        #return tf.constant(float(node), dtype=tf.float32)
     
     def is_tensor(self, node):
         return node is tf.Tensor

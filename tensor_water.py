@@ -34,6 +34,7 @@ import sympy as sp
 
 import datetime
 import pickle
+import random
 
 """
 
@@ -66,8 +67,6 @@ from pycallgraph.output import GraphvizOutput
 
 
 """UTILS"""
-#SOL_FILE="SProblem_2001-09-30_end_2002-05-31.plan"
-SOL_FILE="plan.sol"
 
 # create the new directory for the pickle files
 new_folder = os.path.join(os.getcwd(), 'pickle_files/')
@@ -80,7 +79,11 @@ os.makedirs(new_folder, exist_ok=True)
 
 reader = PDDLReader()
 
-w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
+#SOL_FILE="plan.sol"
+SOL_FILE="SProblem_2001-09-30_end_2002-05-31.plan"
+
+#w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
+w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'SProblem_2001-09-30_end_2002-05-31.pddl')
 
 if os.path.exists(new_folder+SOL_FILE):
   # Reload the saved plan from the file
@@ -108,8 +111,7 @@ os.sync()
 def execute(plan, initial_state):
   result= plan.forward(initial_state)
   state=plan.get_final_state()
-  tf.print("Objective function: ", state["objective"] )
-  print()
+  tf.print("E. Objective function: ", state["objective"] )
   return result
 
 
@@ -119,27 +121,53 @@ start_time = time.time()
 seq_plan=TfPlan(w_problem, tensor_state, sol_plan)
 end_time = time.time()
 print("Creation time of act_sequence:", end_time - start_time, "seconds")
+state=seq_plan.get_final_state()
+print("Creation Objective function: ", state["objective"] )
 os.sync()
-start_time = time.time()
 #DEBUG=6
+print()
+
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+start_time = time.time()
 result= seq_plan.forward(initial_state)
 #result= 0
 end_time = time.time()
 print("Forward1:", end_time - start_time, "seconds, result: ", result)
-
 state=seq_plan.get_final_state()
 print("Objective function: ", state["objective"] )
+os.sync()
 #exit()
 
+initial_state={}
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3800.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 start_time = time.time()
-execute(seq_plan, initial_state)
+result= execute(seq_plan, initial_state)
 end_time = time.time()
-tf.print("Forward:", end_time - start_time, "seconds, result: ", result)
+print("Forward2:", end_time - start_time, "seconds, result: ", result)
+print()
 
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 start_time = time.time()
-execute(seq_plan, initial_state)
+result= execute(seq_plan, initial_state)
 end_time = time.time()
-tf.print("Forward:", end_time - start_time, "seconds, result: ", result)
+print("Forward3:", end_time - start_time, "seconds, result: ", result)
+print()
+times=[]
+for i in range(0,100):
+  val=random.randint(0,1500)
+  initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(val, dtype=tf.float32)
+  print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+  start_time = time.time()
+  result= execute(seq_plan, initial_state)
+  end_time = time.time()
+  delta=end_time - start_time
+  print("Forward-"+str(i)+": ", end_time - start_time, "seconds, result: ", result)
+  times.append(delta)
 
+print("Average time: ", np.mean(times), "seconds")
+print("Standard deviation: ", np.std(times), "seconds")
 
 os.sync()

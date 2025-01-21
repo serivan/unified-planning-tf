@@ -51,7 +51,6 @@ class TensorState(ABC):
                 self._non_trainable_fluents.append(fluent.get_name())
         
         #Add the are_preconditions_satisfied fluent
-        #self._state[ARE_PREC_SATISF_STR] = self._create_fluent(ARE_PREC_SATISF_STR, 0, False)
         #self._non_trainable_fluents.append(ARE_PREC_SATISF_STR)
         
     
@@ -240,8 +239,12 @@ class TensorState(ABC):
     def print_filtered_dict_state(state, excluded_list=None):
         for key, value in state.items():
             if  value!=0 and not any(excluded in key for excluded in excluded_list) :
-                print(key,": ", value.numpy(), end=" -- ")
-
+                if value is tf.Tensor:
+                    print_val= value.numpy()
+                else:
+                    print_val=value
+                
+                print(key,": ", value, end=" -- ")
 
 class TfState(TensorState): #, tf.experimental.ExtensionType):
     def __init__(self, problem, intialize=True):
