@@ -79,17 +79,17 @@ os.makedirs(new_folder, exist_ok=True)
 
 reader = PDDLReader()
 
-#SOL_FILE="plan.sol"
-SOL_FILE="SProblem_2001-09-30_end_2002-05-31.plan"
+SOL_FILE="plan.sol"
+#SOL_FILE="SProblem_2001-09-30_end_2002-05-31.plan"
 
-#w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
-w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'SProblem_2001-09-30_end_2002-05-31.pddl')
+w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
+#w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'SProblem_2001-09-30_end_2002-05-31.pddl')
 
 if os.path.exists(new_folder+SOL_FILE):
   # Reload the saved plan from the file
   # Reload the saved PDDL solution file
   sol_plan = reader.parse_plan(w_problem,new_folder+SOL_FILE)
-if(DEBUG>0):   
+if(DEBUG>=0):   
   print("Actions:")
   print(w_problem.actions)
 
@@ -127,7 +127,7 @@ os.sync()
 #DEBUG=6
 print()
 
-initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 start_time = time.time()
 result= seq_plan.forward(initial_state)
@@ -166,6 +166,7 @@ for i in range(0,100):
   delta=end_time - start_time
   print("Forward-"+str(i)+": ", end_time - start_time, "seconds, result: ", result)
   times.append(delta)
+  print()
 
 print("Average time: ", np.mean(times), "seconds")
 print("Standard deviation: ", np.std(times), "seconds")

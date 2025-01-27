@@ -70,12 +70,26 @@ class TensorPlan(ABC):
             if DEBUG>4:
                 print("Action: ", tensor_action) 
             
+            tensor_action.set_curr_state(curr_state)
+            new_state = TensorState.shallow_copy_dict_state(curr_state)
+
             # Apply the action to the current state
-            new_state=tensor_action.apply_action(curr_state)
+            state_update=tensor_action.apply_action(curr_state)
+            for key, value in state_update.items():
+                if key == ARE_PREC_SATISF_STR:
+                    curr_state[ARE_PREC_SATISF_STR]=value
+                else:
+                    new_state[key]=value    
+
+            # Update the new state after applying the action
+            tensor_action.set_new_state(new_state)
             self.states_sequence[i+1] = new_state
             self.new_state = new_state
             curr_state = new_state  # Update the reference for the next iteration
 
+            if DEBUG>5:
+                print("State after action:", end=":: ")
+                TensorState.print_filtered_dict_state(new_state,["next"])
             #print("New state:", new_state)
        
 
@@ -104,7 +118,21 @@ class TensorPlan(ABC):
             # Apply the action to the current state
             if DEBUG>2:
                 print("Apply Action in ", step, " name: ", tensor_action.get_name())
-            new_state=tensor_action.apply_action(curr_state)
+            tensor_action.set_curr_state(curr_state)
+
+            new_state = TensorState.shallow_copy_dict_state(curr_state)
+ 
+            state_update=tensor_action.apply_action(curr_state) 
+
+            for key, value in state_update.items():
+                if key == ARE_PREC_SATISF_STR:
+                    curr_state[ARE_PREC_SATISF_STR]=value
+                else:
+                    new_state[key]=value    
+
+            # Update the new state after applying the action
+            tensor_action.set_new_state(new_state)
+
             # Update the new state after applying the action
             step+=1
             self.new_state = new_state
@@ -131,6 +159,8 @@ class TensorPlan(ABC):
         """
         self.converter.set_state(state)
         
+        metric=self.problem.quality_metrics[0]
+        metric_expr=str(metric.expression)
         satisfied=1
         for goal in self.problem.goals:
             fluent_name = goal.get_name()
@@ -143,6 +173,10 @@ class TensorPlan(ABC):
             if current_value <= 0:
                 tf.print("Fluent unsatisfied: ", fluent_name,", value: ",current_value)
                 satisfied=satisfied*0 # Needed for tf function; use a break?
+     
+                metric_value = state[metric_expr]+ UNSAT_PENALTY  #  *  current_value
+                state[metric_expr]=metric_value
+     
 
         return satisfied
     
@@ -176,13 +210,14 @@ class TensorPlan(ABC):
         #for step,act in self.actions_sequence.items():
         #    if act.is_applicable() <= 0:
         #        tf.print("Action ", step," not applicable:", act.get_name(), act._are_preconditions_satisfied)
-        for step, tensor_action in list(self.actions_sequence.items())[:-1]:
+        for step, state in list(self.states_sequence.items())[:-1]:
 
-            if tensor_action.get_are_preconditions_satisfied() > 0:
+            if state[ARE_PREC_SATISF_STR] > 0:
                 if DEBUG > 1:
-                    tf.print("Action in ", step, " is applicable: ", tensor_action.get_name())
+                    tf.print("Action in ", step, " is applicable: ", self.actions_sequence[step].get_name())
                 metric_applicable += 1
             else:
+                valid=0
                 if DEBUG > 0:
                     tf.print("Action in ", step, " is NOT applicable: ", tensor_action.get_name())
                     

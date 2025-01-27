@@ -54,26 +54,14 @@ class SympyToTensorConverter(ABC):
     def when_sympy_expr_not_inserted(self, effect, are_prec_satisfied):
         # Handle different effect kinds
         if effect.kind == EffectKind.ASSIGN:
-            #value_str = tf.cond(
-            #    are_prec_satisfied <= 0.0,
-            #    lambda: str(effect.fluent.get_name()),
-            #    lambda: str(effect.value),
-            #)
             value_str = str(effect.fluent.get_name()) if are_prec_satisfied <= 0.0 else str(effect.value)
+
         elif effect.kind == EffectKind.INCREASE:
-            #value_str = tf.cond(
-            #    are_prec_satisfied <= 0.0,
-            #    lambda: str(effect.fluent.get_name()),
-            #    lambda: str(effect.fluent.get_name()) + '+' + str(effect.value),
-            #)
             value_str = str(effect.fluent.get_name()) if are_prec_satisfied <= 0.0 else str(effect.fluent.get_name()) + '+' + str(effect.value)
+
         elif effect.kind == EffectKind.DECREASE:
-            #value_str = tf.cond(
-            #    are_prec_satisfied <= 0.0,
-            #    lambda: str(effect.fluent.get_name()),
-            #    lambda: str(effect.fluent.get_name()) + '-' + str(effect.value),
-            #)
             value_str = str(effect.fluent.get_name()) if are_prec_satisfied <= 0.0 else str(effect.fluent.get_name()) + '-' + str(effect.value)
+
         else:
             raise ValueError("Unsupported effect kind")
 
@@ -81,7 +69,7 @@ class SympyToTensorConverter(ABC):
         sympy_expr = sympy.sympify(value_str)
         return sympy_expr
 
-    def build_compute_effect_value(self, effect, are_prec_satisfied=0.0):
+    def define_effect_value(self, effect, are_prec_satisfied=0.0):
         ''' Compute the value of the effect
             Args:   effect (Effect): The effect to apply.
             Returns: The value of the effect
@@ -147,49 +135,7 @@ class SympyToTensorConverter(ABC):
         #result= eval(value_str, {}, local_scope)
         return result
 
-
-    def compute_effect_value_sympy(self, effect, are_prec_satisfied=0.0):
-        ''' Compute the value of the effect
-            Args:   effect (Effect): The effect to apply.
-            Returns: The value of the effect
-        '''
-        value_str=""
-        if(DEBUG>6):
-            print("..compute_effect_value: ", effect.fluent.get_name())
-            
-        if (effect.sympy_expr_inserted == 1):
-            sympy_expr = effect.sympy_expr
-
-        else:
-            if effect.kind == EffectKind.ASSIGN:
-                value_str=tf.cond(are_prec_satisfied<=0.0,lambda:  str(effect.fluent.get_name()), lambda:  str(effect.value)) 
-                #value_str= str(effect.fluent.get_name()) +'* (1- '+ARE_PREC_SATISF_STR+ ') + '+ str(effect.value)+'* '+ARE_PREC_SATISF_STR
-            elif effect.kind == EffectKind.INCREASE:
-                value_str= tf.cond(are_prec_satisfied<=0.0,lambda:  str(effect.fluent.get_name()),lambda:  str(effect.fluent.get_name())+'+'+ str(effect.value)) 
-                #value_str= str(effect.fluent.get_name())+' + '+ ARE_PREC_SATISF_STR + ' * '+ str(effect.value)
-            elif effect.kind == EffectKind.DECREASE:
-                value_str= tf.cond(are_prec_satisfied<=0.0, lambda: str(effect.fluent.get_name()), lambda: str(effect.fluent.get_name())+'-'+ str(effect.value) )
-                #value_str= str(effect.fluent.get_name())+' - ' + ARE_PREC_SATISF_STR +' * '+ str(effect.value)
-            else:
-                raise ValueError("Unsupported effect kind")
-            sympy_expr = sympy.sympify(value_str)
-            effect.insert_sympy_expression(sympy_expr)
-
-
-        result = self.convert(sympy_expr, are_prec_satisfied)      
-        if(DEBUG>3):
-            print("Effect value: ", value_str)
-            print("Result: ", result)
-            os.sync()
-
-        # Dynamically evaluate the operation string in the given scope
-        # Add TensorFlow's namespace to the evaluation environment
-        #local_scope = {**self.state, "tf": tf}
-        #result= eval(value_str, {}, local_scope)
-        return result
-
-    
-    def compute_condition_value(self, condition: Union[
+    def define_condition_value(self, condition: Union[
             "up.model.fnode.FNode",
             "up.model.fluent.Fluent",
             "up.model.parameter.Parameter",
@@ -203,6 +149,11 @@ class SympyToTensorConverter(ABC):
             value_str = str(condition.args[1])+'-'+str(condition.args[0])+ '+' +str(TENSOR_EPSILON)
         elif condition.node_type == OperatorKind.FLUENT_EXP:
             value_str = str(condition.get_name())   
+            #if value_str in self.state:
+            #    value=self.state[value_str]
+            #else:
+            #    value= tf.constant(0.0)
+            #return value
         elif condition.node_type == OperatorKind.NOT:
             cond_value=self.compute_condition_value(condition.args[0]) 
             return 1.0- cond_value
@@ -237,12 +188,75 @@ class SympyToTensorConverter(ABC):
             raise ValueError("Operator not supported")
         
         sympy_expr = sympy.sympify(value_str)
+
+    def compute_condition_value_rotto(self, condition: Union[
+            "up.model.fnode.FNode",
+            "up.model.fluent.Fluent",
+            "up.model.parameter.Parameter",
+            bool]):
+
+        
+        sympy_expr = self.define_condition_value(condition) 
         result = self.convert(sympy_expr)
         
-        # Dynamically evaluate the operation string in the given scope
-        # Add TensorFlow's namespace to the evaluation environment
-        #local_scope = {**self.state, "tf": tf}
-        #result= eval(value_str, {}, local_scope)
+        return result
+
+
+    def compute_condition_value(self, condition: Union[
+            "up.model.fnode.FNode",
+            "up.model.fluent.Fluent",
+            "up.model.parameter.Parameter",
+            bool]):
+        value_str = ""
+        if(DEBUG>6):
+            print("..compute_condition_value")
+        if condition.node_type == OperatorKind.LT:
+            value_str = str(condition.args[1])+'-'+str(condition.args[0])
+        elif condition.node_type == OperatorKind.LE:
+            value_str = str(condition.args[1])+'-'+str(condition.args[0])+ '+' +str(TENSOR_EPSILON)
+        elif condition.node_type == OperatorKind.FLUENT_EXP: 
+            value_str = str(condition.get_name())   
+            if value_str in self.state:
+                value=self.state[value_str]
+            else:
+                value= tf.constant(0.0)
+            return value
+        elif condition.node_type == OperatorKind.NOT:
+            cond_value=self.compute_condition_value(condition.args[0]) 
+            return 1.0- cond_value
+        elif condition.node_type == OperatorKind.AND:
+            result=0.0
+            for arg in condition.args:
+                if arg.type.is_bool_type()==True:
+                    value=self.compute_condition_value(arg) - TENSOR_EPSILON #to avoid 0.0
+                else:
+                    value=self.compute_condition_value(arg)
+                val=self.negativeRelu( value )
+                result += val
+            if result >= 0.0:
+                result=1.0 -result #result=0 when all conditions are satisfied, negative when one is not satisfied; a new result tensor value of 1.0 means the condition is satisfied
+            
+            return result
+        elif condition.node_type == OperatorKind.OR:
+            result=1.0
+            for arg in condition.args:
+                if arg.type.is_bool_type():
+                    value=self.compute_condition_value(arg) - TENSOR_EPSILON #to avoid 0.0
+                else:
+                    value=self.compute_condition_value(arg)
+                val= (-1.0) * self.negativeRelu( value ) # value=0 when the condition is satisfied, negative when it is not satisfied
+                result *= val
+            if result >= 0.0:
+                result= (-1.0) * result #a negative tensor value means the condition is NOT satisfied
+            else:
+                result=1.0-result #results=0 and a tensor value of 1.0 means the condition is satisfied
+            return result
+        else:
+            raise ValueError("Operator not supported")
+        
+        sympy_expr = sympy.sympify(value_str)
+
+        result = self.convert(sympy_expr)
         return result
 
 
@@ -259,13 +273,12 @@ class SympyToTensorConverter(ABC):
         node_name=str(node)
         if(DEBUG>4):
             print("..tensor_convert: ", node_name)
-        if isinstance(node, sympy.Symbol):
+
+        if isinstance(node, tf.Tensor):
+            # Return the tensor as is
+            value= node
+        elif isinstance(node, sympy.Symbol):
             # Look up the symbol in the state and return its value
-            #value=tf.cond( tf.equal(node_name, ARE_PREC_SATISF_STR), 
-            #              lambda: are_prec_satisfied, 
-            #              lambda: tf.cond( tf.reduce_any(tf.equal(node_name, list(self.state.keys()))),
-            #                               lambda: self.state[node_name], 
-            #                               lambda: tf.Variable(0.0, dtype=tf.float32, trainable=False) ) )
             if node_name == ARE_PREC_SATISF_STR :
                 value=are_prec_satisfied
             elif node_name in self.state:

@@ -54,6 +54,13 @@ class TensorAction(ABC):
         if DEBUG>1:
             print("Action ID:", self._action_id)
 
+
+    def set_curr_state(self, state):
+        self.curr_state=state
+    
+    def set_new_state(self, state):
+        self.new_state=state
+
     def get_curr_state(self):
         return self.curr_state
 
@@ -76,35 +83,39 @@ class TensorAction(ABC):
         Returns:
             cost (Tensor): The cost calculated by applying the action's effects, or an invalid state if preconditions are not met.
         """
-        self.curr_state=curr_state
-        self._converter = self._converter_funct(curr_state)
-        new_state = TensorState.shallow_copy_dict_state(curr_state)
-        self.new_state = new_state 
-            
+        if curr_state is not None:
+            self.curr_state=curr_state
+
+        self._converter = self._converter_funct(self.curr_state)
+        
         if DEBUG>6:
-            print("Initial state:", curr_state)
+            print("Initial state:", self.curr_state)
             #tf.print(".Initial state:", curr_state['objective'])
 
         # Evaluate preconditions
         self._are_preconditions_satisfied = self.evaluate_preconditions()
-        #curr_state[ARE_PREC_SATISF_STR].assign(self._are_preconditions_satisfied)
-        #new_state[ARE_PREC_SATISF_STR]=self._are_preconditions_satisfied #UPDATE temporarily also in new_state since the converter works on new_state
-
+ 
         # Apply effects if preconditions are satisfied
-        self.apply_effects()
+        state_update=self.apply_effects()
 
+        state_update[ARE_PREC_SATISF_STR]=self._are_preconditions_satisfied #UPDATE state_update to export value for tf.function
+   
         # Update the metric value if the preconditions are not satisfied
         metric=self.problem.quality_metrics[0]
-        metric_value = tf.cond(
-            tf.greater(self._are_preconditions_satisfied, 0.0),
-            lambda: self.new_state[str(metric.expression)] ,# Default or alternative value
-            lambda: self.new_state[str(metric.expression)] + 50000.0 
-        )
-        self.new_state[str(metric.expression)]=metric_value
-        #if self._are_preconditions_satisfied<=0:
-        #    metric=self.problem.quality_metrics[0]
-        #    metric_value = self.curr_state[str(metric.expression)]+ 100.0 #(UNSAT_PENALTY * self._are_preconditions_satisfied)
-        #    self.new_state[str(metric.expression)]=metric_value
+        metric_expr=str(metric.expression)
+        if metric_expr in state_update:
+            metric_value = state_update[metric_expr]
+        else:
+            metric_value = self.curr_state[metric_expr]
+        #metric_value = tf.cond(
+        #    tf.greater(self._are_preconditions_satisfied, 0.0),
+        #    lambda: self.new_state[str(metric.expression)] ,# Default or alternative value
+        #    lambda: self.new_state[str(metric.expression)] + 50000.0 
+        #)
+        if self._are_preconditions_satisfied<=0:
+            metric_value =  metric_value + UNSAT_PENALTY  #  * self._are_preconditions_satisfied)
+     
+        state_update[str(metric.expression)]=metric_value
 
         if DEBUG>0:
             if self._are_preconditions_satisfied<=0:    
@@ -114,17 +125,11 @@ class TensorAction(ABC):
             print("Metric value: ", metric_value)
             print()
 
-
-
-        if DEBUG>5:
-            print("State after action:", end=":: ")
-            TensorState.print_filtered_dict_state(self.new_state,["next"])
-        # Assuming the objective function is defined in the problem
-        #objective = self.problem.objective
-        #objective_str = str(objective)  # Convert objective to string
-        #sympy_expr = sp.sympify(objective_str)
-        #cost = converter.convert(sympy_expr)
-        return self.new_state
+        if DEBUG>1:
+            print("Update after action:", end=":: ")
+            TensorState.print_filtered_dict_state(state_update,["next"])
+            print()
+        return state_update
 
     def get_next_state(self):
         return self.new_state
@@ -182,7 +187,7 @@ class TfAction(TensorAction):
         super().__init__(problem, plan_action,converter_funct)
  
     #@tf.function
-    def apply_action(self, curr_state): #: up.tensor.TensorState):    
+    def apply_action(self, curr_state=None): #: up.tensor.TensorState):    
         """
         Apply TensorfFlow  action to the state if the preconditions are met, and manage the effects.
         """
@@ -216,6 +221,7 @@ class TfAction(TensorAction):
                 value= result()
             result = tf.keras.activations.relu(tf.cast(value, tf.float32))  # ReLU activation for precondition evaluation
             satisfied = tf.multiply(satisfied, result)
+
             if DEBUG>0:
                 if result > 0:
                     if DEBUG>2:
@@ -244,14 +250,14 @@ class TfAction(TensorAction):
             if precondition.get_name() in self.curr_state:
                 return (self.curr_state[precondition.get_name()])
             else:
-                return tf.Variable(0.0, dtype=tf.float32, trainable=False)
-            #return (self.curr_state[precondition.get_name()]).get_value()
+                return tf.constant(0.0) # tf.Variable(0.0, dtype=tf.float32, trainable=False)
         else:
             value= self._converter.compute_condition_value(precondition) 
             #value_str = str(value)  # Convert value to string
             #sympy_expr = sp.sympify(value_str)
             return value #self._converter.convert(sympy_expr)
 
+    #@tf.function
     def apply_effects(self):
         """
         Apply the effects of the action to the new state.
@@ -262,7 +268,7 @@ class TfAction(TensorAction):
         """
         effects = self._up_action.effects
         #self._converter = self._converter_funct(curr_state, self)#  converter (SympyToTensorConverter): The converter instance for SymPy to TensorFlow conversion.
-   
+        out_result={}
         for effect in effects:
             if DEBUG>5:
                 print("Applying effect:", effect)
@@ -273,10 +279,62 @@ class TfAction(TensorAction):
                     print("Condition: ", effect.condition)
                     print("Condition result:", result)
             if result>0:
-                self._apply_single_effect(effect)
+                out_result.update(self._apply_single_effect(effect))
+        
+        return out_result
+
+    #@tf.function
+    def _apply_single_effect_old(self, effect):
+        """
+        Apply a single effect to the new state.
+
+        Args:
+            effect: The effect to apply, which includes a fluent and a value.
+        Returns:
+            A dictionary with the updated fluent value.
+        """
+        fl_name = effect.fluent.get_name()  # Assuming fluent() provides the name
+        fl_var_name = fl_name.replace('(', '_').replace(')', '_')
+
+        result = result1 = tf.constant(0.0, dtype=tf.float32)
+
+        # Handling boolean constant effects
+        def handle_boolean_effect():
+            #value = tf.cond(
+            #    tf.constant(fl_name in self.curr_state, dtype=tf.bool),
+            #    lambda: self.curr_state[fl_name],
+            #    lambda: tf.constant(0.0, dtype=tf.float32)
+            #)
+            #are_preconditions_satisfied =  self.get_are_preconditions_satisfied()
+            result = tf.constant(effect.value.bool_constant_value(), tf.float32) #tf.multiply(tf.cast(effect.value.bool_constant_value(), tf.float32), are_preconditions_satisfied)
+            #result1 = tf.multiply(value, tf.subtract(tf.constant(1.0, dtype=tf.float32), are_preconditions_satisfied))
+
+            #if DEBUG > 4:
+            #    tf.print("-->", fl_name, "- init:", value, " delta:", result + result1 - value, " new:", result + result1)
+
+            return result #, result1
+
+        def handle_non_boolean_effect():
+            condition = effect.is_sympy_expression_inserted()
+            result = self._converter.compute_effect_value(effect, 1) if condition else self._converter.define_effect_value(effect, 1)
+
+            if DEBUG > 4:
+                value = self.curr_state.get(fl_name, tf.constant(0.0, dtype=tf.float32))
+                tf.print("-->", fl_name, "- init:", value, " delta:", result - value, " new:", result)
+
+            return result #, tf.constant(0.0, dtype=tf.float32)
+        # Compute condition dynamically inside the graph
+        #condition = tf.logical_and(
+        #    effect.fluent.node_type == OperatorKind.FLUENT_EXP,
+        #    effect.value.is_bool_constant()
+        #)
+        condition=  effect.fluent.node_type == OperatorKind.FLUENT_EXP and effect.value.is_bool_constant()
+        result = tf.cond(tf.constant(condition), handle_boolean_effect, handle_non_boolean_effect)
+
+        return {fl_name: result}
 
 
-
+    #@tf.function
     def _apply_single_effect(self, effect):
         """
         Apply a single effect to the new state.
@@ -289,6 +347,7 @@ class TfAction(TensorAction):
         fl_var_name = fl_name.replace('(', '_').replace(')', '_')
         if DEBUG>4:
             print("Effect:", effect)
+        result=result1=0.0
 
         if effect.fluent.node_type == OperatorKind.FLUENT_EXP and effect.value.is_bool_constant() :
             '''if tf.math.greater(self.get_are_preconditions_satisfied(),tf.constant(0.0)):
@@ -307,17 +366,20 @@ class TfAction(TensorAction):
             if DEBUG>4:
                 print("-->",fl_name,"- init:",value, " delta:", result+result1-value, " new: ", result+result1)
                 
-            self.new_state[fl_name]=(result+result1) #TfFluent( effect.fluent,result+result1)
+            #self.new_state[fl_name]=(result+result1) #TfFluent( effect.fluent,result+result1)
                 
         else:
             if (effect.is_sympy_expression_inserted()):
                 result =self._converter.compute_effect_value(effect, 1) 
             else:
-                result =self._converter.build_compute_effect_value(effect, 1)
+                result =self._converter.define_effect_value(effect, 1)
             if DEBUG>4:
-                print("-->",fl_name,"- init:",self.new_state[fl_name], " delta:", result-self.new_state[fl_name], " new: ", result)
-            self.new_state[fl_name]=(result) #TfFluent( effect.fluent,result)
+                value=0.0
+                if fl_name in self.curr_state:
+                    value=self.curr_state[fl_name]
+                
+                print("-->",fl_name,"- init:",value, " delta:", result-value, " new: ", result)
+            #self.new_state[fl_name]=(result) #TfFluent( effect.fluent,result)
 
-        if DEBUG>7:
-            print("State after effect:", end=":: ")
-            TensorState.print_filtered_dict_state(self.new_state,["next"])
+        out=(result+result1)
+        return {fl_name: out }

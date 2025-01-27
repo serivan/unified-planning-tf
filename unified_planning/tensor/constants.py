@@ -13,7 +13,7 @@ ARE_PREC_SATISF_STR='ARE_PREC_SATISFIED'
 TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu
 TF_ZERO=tf.Variable(0.0, dtype=tf.float32, trainable=False)
-UNSAT_PENALTY=-100.0
+UNSAT_PENALTY=50000.0
 def grep( string, pattern):
     """
     Mimic the behavior of the grep command on a Python string.
