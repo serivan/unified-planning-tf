@@ -60,12 +60,9 @@ from unified_planning.model.metrics import MinimizeSequentialPlanLength
 from unified_planning.io import PDDLWriter, PDDLReader
 
 from unified_planning.tensor.constants import *
-#Profiling
 
-from pycallgraph import PyCallGraph
-from pycallgraph.output import GraphvizOutput
-
-
+from tensorflow.python.eager import profiler
+tf.config.optimizer.set_experimental_options({"autotune": True})
 """UTILS"""
 
 # create the new directory for the pickle files
@@ -79,10 +76,12 @@ os.makedirs(new_folder, exist_ok=True)
 
 reader = PDDLReader()
 
-SOL_FILE="plan.sol"
+#SOL_FILE="plan.sol"
+SOL_FILE="plan2.sol"
 #SOL_FILE="SProblem_2001-09-30_end_2002-05-31.plan"
 
-w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
+#w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem.pddl')
+w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'problem2.pddl')
 #w_problem = reader.parse_problem(new_folder + 'domain.pddl', new_folder + 'SProblem_2001-09-30_end_2002-05-31.pddl')
 
 if os.path.exists(new_folder+SOL_FILE):
@@ -99,6 +98,8 @@ if(DEBUG>=0):
 
 start_time = time.time()
 tensor_state=TfState(w_problem)
+
+
 #TensorState.print_filtered_dict_state(tensor_state.get_tensors(),["next"])
 #exit()
 #print("Tensor state: ",tensor_state)
@@ -107,13 +108,12 @@ print("State creation:", end_time - start_time, "seconds")
 print()
 os.sync()
 
-@tf.function
+@tf.function(reduce_retracing=True)
 def execute(plan, initial_state):
   result= plan.forward(initial_state)
   state=plan.get_final_state()
   tf.print("E. Objective function: ", state["objective"] )
   return result
-
 
 initial_state={}
 start_time = time.time()
@@ -126,6 +126,29 @@ print("Creation Objective function: ", state["objective"] )
 os.sync()
 #DEBUG=6
 print()
+#exit()
+
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+start_time = time.time()
+result= 0
+#result= seq_plan.preprocess_apply(initial_state)
+end_time = time.time()
+print("Preprocess:", end_time - start_time, "seconds, result: ", result)
+state=seq_plan.get_final_state()
+print("Objective function: ", state["objective"] )
+
+
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+start_time = time.time()
+result= seq_plan.forward(initial_state)
+#result= 0
+end_time = time.time()
+print("Forward1A:", end_time - start_time, "seconds, result: ", result)
+state=seq_plan.get_final_state()
+print("Objective function: ", state["objective"] )
+
 
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
@@ -133,20 +156,59 @@ start_time = time.time()
 result= seq_plan.forward(initial_state)
 #result= 0
 end_time = time.time()
-print("Forward1:", end_time - start_time, "seconds, result: ", result)
+print("Forward1B:", end_time - start_time, "seconds, result: ", result)
 state=seq_plan.get_final_state()
 print("Objective function: ", state["objective"] )
+
 os.sync()
 #exit()
+time.sleep(5)  # Pauses execution for 5 seconds
+print("START")
+tf.print("TF START")
+
 
 initial_state={}
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3800.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 start_time = time.time()
-result= execute(seq_plan, initial_state)
+
+#
+# Start profiling
+
+# Start TensorFlow Profiler
+logdir = "/tmp/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+tf.profiler.experimental.start(logdir)
+
+#with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
+#    result= execute(seq_plan, initial_state)
+#
+tf.profiler.experimental.stop()
+
+
+
+use_callgraph = False
+if use_callgraph:
+  #Profiling
+  # Generate call graph
+  graphviz = GraphvizOutput(output_file='callgraph.svg')  # Vector format
+  graphviz.output_type = 'svg'  # High-resolution, scalable
+
+  #graphviz = GraphvizOutput(output_file='callgraph.pdf')
+  #graphviz.output_type = 'pdf' 
+  #graphviz.dot_args = ['-Gdpi=300'] 
+
+  from pycallgraph import PyCallGraph
+  from pycallgraph.output import GraphvizOutput
+  with PyCallGraph(output=graphviz):
+    result= execute(seq_plan, initial_state)
+else:
+  import cProfile
+  #cProfile.run('result= execute(seq_plan, initial_state)')
+  result= execute(seq_plan, initial_state)
 end_time = time.time()
 print("Forward2:", end_time - start_time, "seconds, result: ", result)
 print()
+
 
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])

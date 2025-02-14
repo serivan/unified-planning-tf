@@ -2,6 +2,8 @@ import tensorflow as tf
 import functools
 import inspect
 
+from tensorflow.lookup.experimental import MutableHashTable
+
 # Activate debug mode
 DEBUG = 0
 
@@ -9,10 +11,18 @@ DEBUG = 0
 EPSILON=1e-7  #tf.keras.backend.epsilon()
 TENSOR_EPSILON = 1e-6
 ARE_PREC_SATISF_STR='ARE_PREC_SATISFIED'
+LIFTED_STR="_LIFT_"
 
 TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu
-TF_ZERO=tf.Variable(0.0, dtype=tf.float32, trainable=False)
+TF_ZERO=tf.constant(0.0, dtype=tf.float32)
+TF_SAT=tf.constant(1.0, dtype=tf.float32)
+MISSING_VAL=TF_UN_SAT=tf.constant(-1.0, dtype=tf.float32)
+
+NUM_ZERO=TF_ZERO.numpy() 
+NUM_SAT=TF_SAT.numpy()
+NUM_UN_SAT=TF_UN_SAT.numpy()
+
 UNSAT_PENALTY=50000.0
 def grep( string, pattern):
     """
@@ -31,88 +41,124 @@ def grep( string, pattern):
             matching_lines.append(line)
     return "\n".join(matching_lines)
 
-
-
-def get_closure_vars(lambda_func):
+class GlobalData():
     """
-    Extract captured variables from a lambda function's closure.
-
-    Args:
-        lambda_func (callable): The lambda function to inspect.
-
-    Returns:
-        list: A list of captured variables.
+    Class to store global data.
     """
-    if not (callable(lambda_func) and  ((lambda_func.__name__ == "<lambda>") or (lambda_func.__name__ == "tf_multiply"))):
-        raise ValueError("Provided input must be a lambda function.")
+  
+    _class_up_actions_map={} # Map to store the up action and the corresponding ID
 
-    # Access the closure
-    closure = lambda_func.__closure__
-    if not closure:
-        return []  # Return None if there is no closure
+    _class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
+    _class_predicates_map=MutableHashTable(key_dtype=tf.string, value_dtype=tf.int64, default_value=-1) # Map to store the predicates
+   
+    _class_conditions_list=[]  # List to store the preconditions
+    _class_conditions_map={} # Map to store the preconditions
 
-    # Concatenate the cell contents
-    concatenated = []
-    for cell in closure:
-        content = cell.cell_contents
-        if isinstance(content, (list, tuple, set)):
-            concatenated.extend(content)  # Extend with iterable contents
-        else:
-            concatenated.append(content)  # Append non-iterable contents
-    return concatenated
+    _class_effects_list=[]  # List to store the effects
+    _class_effects_map={} # position of the effect in _effects_list
 
 
-def extract_function_and_args(lambda_func):
-    """
-    Extract the function and arguments from a lambda without executing it.
 
-    Args:
-        lambda_func (callable): The lambda function to inspect.
-
-    Returns:
-        tuple: A tuple containing the lambda's body (function) and its arguments.
-    """
-    if isinstance(lambda_func, tuple):
-        return lambda_func  # Return the input if it is already a tuple
-
-    if not (callable(lambda_func) and ((lambda_func.__name__ == "<lambda>") or (lambda_func.__name__ == "tf_multiply"))):
-        raise ValueError("Provided input must be a lambda function.")
-
-    # Retrieve closure variables
-    closure_vars = get_closure_vars(lambda_func)
-
-    # Inspect the function's signature
-    signature = inspect.signature(lambda_func)
-    arg_names = list(signature.parameters.keys())
-
-    return lambda_func, closure_vars  # Return the function and captured variables
+    def _insert_in_map(keys, table_kv, list_vk, value=None):
+        assigned_values = []  # List to store the incremented values
+        #table_kv=GlobalData._class_predicates_map
+        #list_vk=GlobalData._class_predicates_list
 
 
-def apply_recursive_lambda(lambda_expr):
-    """
-    Recursively process a lambda function by extracting and applying its logic.
+        # Iterate over each key in the set
+        for key_elem in keys:
 
-    Args:
-        lambda_expr (lambda): The lambda function to process.
+            key = tf.convert_to_tensor(str(key_elem), dtype=tf.string)
+             # Lookup current value
+            current_value = table_kv.lookup(key)
 
-    Returns:
-        The final result after applying the lambda function recursively.
-    """
-    func, args = extract_function_and_args(lambda_expr)
+            # Insert only if it's a new key
+            if tf.equal(current_value, -1):
+                if value is None:
+                    current_value=table_kv.size()
+                else:
+                    current_value = value
+                table_kv.insert(key, current_value )
+                current_value = table_kv.lookup(key)
+                list_vk.insert(current_value, key)
 
-    # Process arguments recursively
-    new_args = []
-    for arg in args:
-        if callable(arg):
-            # Recursively process callable arguments
-            res = apply_recursive_lambda(arg)
-            new_args.append(res)
-        else:
-            # Non-callable arguments are added directly
-            new_args.append(arg)
-    # Recreate the lambda with updated arguments using functools.partial
-    # This allows us to "bind" the modified arguments to the function
-    #new_lambda = functools.partial(func, new_args)
+            assigned_values.append(current_value.numpy())  # Store result
 
-    # Execute the modified lambda
-    return func(new_args) #new_lambda()
+        # Return the tensor of incremented values
+        return tf.constant(assigned_values, dtype=tf.int32)
+        #return tf.stack(assigned_values)
+
+    def _get_keys_from_list(indexes, list_vk):
+        '''
+        Retrieves keys corresponding to the given indexes from the corresponding indexes
+        '''
+        keys=[]  
+        for indx in indexes:
+            if indx<0 or indx>=len(list_vk):
+                key=None
+            else:
+                key = list_vk[indx]
+            keys.append(key)
+        return keys
+
+
+    def insert_predicates_in_map(keys):
+        
+        table_kv=GlobalData._class_predicates_map
+        list_vk=GlobalData._class_predicates_list
+
+        return GlobalData._insert_in_map(keys, table_kv, list_vk)
+
+    
+    def get_key_from_indx_predicates_list(indx):
+        '''
+        Retrieves keys corresponding to the given indexes from the corresponding indexes
+        '''
+        list_vk=GlobalData._class_predicates_list
+        key = list_vk[indx]
+        
+        return key
+
+    def get_keys_from_predicates_list(indexes):
+        '''
+        Retrieves keys corresponding to the given indexes from the corresponding indexes
+        '''
+        list_vk=GlobalData._class_predicates_list
+        return GlobalData._get_keys_from_list(indexes, list_vk)
+
+    def set(self, key, value):
+        """
+        Set a global value.
+
+        Args:
+            key (str): The key to set.
+            value (object): The value to set.
+        """
+        self._data[key] = value
+
+    def get(self, key):
+        """
+        Get a global value.
+
+        Args:
+            key (str): The key to get.
+
+        Returns:
+            object: The value associated with the key.
+        """
+        return self._data[key]
+
+
+     
+    def get_lifted_string(prec_str:str, predicates_set, lifted_str:str=LIFTED_STR):
+        ''' Replace the predicates in the string with the lifted string+index'''
+        for indx, pred in enumerate(predicates_set):
+            prec_str=prec_str.replace(str(pred), lifted_str+str(indx))
+        return prec_str
+   
+
+    def __repr__(self):
+        return str(self._data)
+
+    def __str__(self):
+        return str(self._data)

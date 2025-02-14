@@ -11,6 +11,8 @@ from unified_planning.tensor.constants import *
 from unified_planning.model import OperatorKind
 from unified_planning.model import EffectKind
 
+from tensorflow.lookup.experimental import MutableHashTable
+
 
 
 
@@ -29,7 +31,24 @@ class TensorState(ABC):
         self.action=None
         # Populate the initial state (delegated to a subclass, if necessary)
         if initialize==True:
-            self._initialize_state()        
+            self._initialize_state()   
+
+        
+        # Create a MutableHashTable
+        default_value = MISSING_VAL  # Default value if a key is not found
+        self._hash_state = MutableHashTable(
+            key_dtype=tf.string, 
+            value_dtype=tf.float32, 
+            default_value=default_value
+        )
+        curr_state=self.get_tensors()
+        # Convert dictionary keys and values to TensorFlow tensors
+        keys_tensor = tf.constant(list(curr_state.keys()), dtype=tf.string)
+        values_tensor =tf.Variable(list(curr_state.values()), dtype=tf.float32) 
+
+        # Insert data into the hash table
+        self._hash_state.insert(keys_tensor, values_tensor)
+
  
     def _initialize_state(self):
         """
@@ -44,7 +63,7 @@ class TensorState(ABC):
             else:  
                 trainable=False
             if not (fluent.type.is_bool_type() and value.is_true() == False):
-                self._state[fluent.get_name()] = self._create_fluent(fluent, value, trainable)
+                self._state[fluent.get_name()] = self._create_fluent(fluent, value, trainable) # XXXX check if 
             if trainable:
                 self._trainable_fluents.append(fluent.get_name())
             else:
@@ -61,6 +80,16 @@ class TensorState(ABC):
         :return: Dictionary of fluent names and their corresponding values.
         """
         return self._state
+
+ 
+    
+    def get_hash_state(self):
+        """
+        Returns the current state.
+
+        :return: Dictionary of fluent names and their corresponding values.
+        """
+        return self._hash_state
 
     def __ref__(self):
         """
@@ -245,6 +274,59 @@ class TensorState(ABC):
                     print_val=value
                 
                 print(key,": ", value, end=" -- ")
+
+    @staticmethod
+    def print_filtered_hash_state(state, excluded_list=None):
+
+        keys, values = state.export()  # Get all keys and values
+        
+        for key, value in zip(keys.numpy(), values.numpy()):
+            if  value!=0 and not any(excluded in str(key) for excluded in excluded_list) :
+                if value is tf.Tensor:
+                    print_val= value.numpy()
+                else:
+                    print_val=value
+                
+                print(key,": ", print_val, end=" -- ")
+
+
+    @staticmethod
+    def shallow_copy_hash_state(hash_state):
+        """Creates a shallow copy of a tf.lookup.MutableHashTable.
+    
+            Args:
+                hash_table (tf.lookup.MutableHashTable): The hash table to copy.
+        
+            Returns:
+                tf.lookup.MutableHashTable: A new hash table with the same key-value pairs.
+        """
+        # Get all keys from the existing hash table
+        keys_tensor = hash_state.export()[0]
+    
+        # Lookup values for the extracted keys
+        values_tensor = hash_state.lookup(keys_tensor)
+    
+        # Create a new hash table with the same default value
+        default_value = MISSING_VAL  # Default value if a key is not found
+        new_hash_state = MutableHashTable(
+            key_dtype=hash_state.key_dtype, 
+            value_dtype=hash_state.value_dtype, 
+            default_value=default_value
+        )
+    
+       # Insert the copied keys and values into the new table
+        new_hash_state.insert(keys_tensor, values_tensor)
+    
+        return new_hash_state
+    
+    @staticmethod
+    def print_hash_state(hash_table: MutableHashTable) -> None:
+        """Retrieve and print all key-value pairs."""
+
+        keys, values = self._hash_table.export()  # Get all keys and values
+        
+        for key, value in zip(keys.numpy(), values.numpy()):
+            print(f"{key.decode()}: {value} -- ", end="")
 
 class TfState(TensorState): #, tf.experimental.ExtensionType):
     def __init__(self, problem, intialize=True):

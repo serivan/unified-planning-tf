@@ -8,8 +8,11 @@ from unified_planning.model import EffectKind
 from unified_planning.engines.compilers import Grounder, GrounderHelper
 from unified_planning.tensor.converter import SympyToTfConverter
 from unified_planning.tensor.tensor_state import TensorState
+from unified_planning.tensor.tensor_action import TensorAction
 
 from unified_planning.tensor.constants import *
+
+import threading
 
 class TensorPlan(ABC):
     def __init__(self, problem, state, plan, action_type=up.tensor.TfAction):
@@ -22,16 +25,18 @@ class TensorPlan(ABC):
         """
         self.plan = plan
         self.tensor_state = state
-        self.initial_state = self.curr_state =state.get_tensors()
+        self.initial_state = self.curr_state =state.get_hash_state()
         self.actions_sequence = {}  # Dictionary to store executed actions
         self.new_state = {}     # The resulting state after applying actions
-        self.states_sequence = {} # The sequence of states after applying actions 
-        self.action_type = action_type  # Choose between TfAction and TorchAction
+        self.state_updates = {} # The sequence of states updates after applying actions 
+        self.new_action = action_type  # Choose between TfAction and TorchAction
 
-        self._converter_funct = SympyToTfConverter
-        self.converter = self._converter_funct(state)
+        self.converter_funct = SympyToTfConverter
+        self.converter = self.converter_funct(self.curr_state)
 
         self.problem = problem
+        self.goal_list=[]
+
         #self.problem_kind=pk = problem.kind
         #if not Grounder.supports(pk):
         #    msg = f"The Grounder used in the {type(self).__name__} does not support the given problem"
@@ -41,7 +46,7 @@ class TensorPlan(ABC):
         #        warn(msg)
 
         # Ensure the action type is valid
-        if self.action_type not in [up.tensor.TfAction]: #, up.tensor.TorchAction]:
+        if self.new_action not in [up.tensor.TfAction]: #, up.tensor.TorchAction]:
             raise ValueError("Invalid action type. Use 'TfAction' or 'TorchAction'.")
          
         # Build the sequence of actions
@@ -58,12 +63,11 @@ class TensorPlan(ABC):
         if DEBUG>0:
             print("Building plan")
         #curr_state =self.create_copy_state(my_state)
-        curr_state =TensorState.shallow_copy_dict_state(my_state)
+        curr_state =TensorState.shallow_copy_hash_state(my_state)
 
-        self.states_sequence[0] = curr_state
-        
+        self.states_updates={}
         for i, act in enumerate(self.plan.actions):
-            tensor_action = self.action_type(problem=self.problem, plan_action=act, converter_funct=self._converter_funct)
+            tensor_action = self.new_action(problem=self.problem, plan_action=act, converter=self.converter, state=curr_state)
             self.actions_sequence[i] = tensor_action
             if DEBUG>1:
                 print("Step: ", i, " act name: ", tensor_action.get_name())
@@ -71,26 +75,40 @@ class TensorPlan(ABC):
                 print("Action: ", tensor_action) 
             
             tensor_action.set_curr_state(curr_state)
-            new_state = TensorState.shallow_copy_dict_state(curr_state)
-
+            new_state= curr_state 
             # Apply the action to the current state
-            state_update=tensor_action.apply_action(curr_state)
+            state_update=tensor_action.no_tf_apply_action(tensor_action.get_up_action_id())
             for key, value in state_update.items():
                 if key == ARE_PREC_SATISF_STR:
-                    curr_state[ARE_PREC_SATISF_STR]=value
+                    if len(self.state_updates)>0 and  len(self.state_updates[i])>0:
+                        curr_update=self.state_updates[i]
+                        curr_update[ARE_PREC_SATISF_STR]=value
+                    else:
+                        self.state_updates[i]={key: value}
                 else:
-                    new_state[key]=value    
+                    new_state.insert(key,value)    
 
             # Update the new state after applying the action
             tensor_action.set_new_state(new_state)
-            self.states_sequence[i+1] = new_state
+            self.state_updates[i+1] = state_update
             self.new_state = new_state
             curr_state = new_state  # Update the reference for the next iteration
 
             if DEBUG>5:
                 print("State after action:", end=":: ")
-                TensorState.print_filtered_dict_state(new_state,["next"])
+                TensorState.print_filtered_hash_state(new_state,["next"])
             #print("New state:", new_state)
+        
+
+        for goal in self.problem.goals:
+            fluent_name = goal.get_name()
+
+            goal_position = TensorAction.store_condition(goal, self.converter)
+            # Store the precondition position to build the action's preconditions_list
+            self.goal_list.append(goal_position)
+
+        #Provide a tensor representation of the predicates
+        GlobalData._class_predicates_list=tf.stack(GlobalData._class_predicates_list)
        
 
     def forward(self, dict_state):
@@ -102,14 +120,13 @@ class TensorPlan(ABC):
         """
         if DEBUG > 0:
             print(".forward")
-        curr_state = self.states_sequence[0]
-        
-        #self.reset_states_sequence(self.initial_state)
+        curr_state = TensorState.shallow_copy_hash_state(self.initial_state)
+        self.state_updates[0]={}
         
         for fluent, value in dict_state.items():
             #print("Fluent:", fluent)
             #print("Initial value:", value)
-            curr_state[fluent].assign(value)
+            curr_state.insert(tf.constant(fluent,tf.string),value)
     
         step=0
         for tensor_action in self.actions_sequence.values():    
@@ -119,29 +136,32 @@ class TensorPlan(ABC):
             if DEBUG>2:
                 print("Apply Action in ", step, " name: ", tensor_action.get_name())
             tensor_action.set_curr_state(curr_state)
-
-            new_state = TensorState.shallow_copy_dict_state(curr_state)
- 
-            state_update=tensor_action.apply_action(curr_state) 
-
+            
+            new_state= curr_state
+            state_update=tensor_action.apply_action(tensor_action.get_up_action_id()) 
+            if DEBUG >2:
+                print("State update: ", state_update)   
             for key, value in state_update.items():
                 if key == ARE_PREC_SATISF_STR:
-                    curr_state[ARE_PREC_SATISF_STR]=value
+                    if len(self.state_updates)>0 and  len(self.state_updates[step])>0:
+                        curr_update=self.state_updates[step]
+                        curr_update[ARE_PREC_SATISF_STR]=value
+                    else:
+                        self.state_updates[step]={key: value}
                 else:
-                    new_state[key]=value    
+                    new_state.insert(key,value)    
 
             # Update the new state after applying the action
             tensor_action.set_new_state(new_state)
+            self.state_updates[step+1] = state_update
+            self.new_state = new_state
+            curr_state = new_state  # Update the reference for the next iteration
 
             # Update the new state after applying the action
             step+=1
-            self.new_state = new_state
-            curr_state = new_state
-            self.states_sequence[step] = new_state
-            #print("New state:", self.new_state)
             
         valid=self.get_plan_metric(new_state)
-        if DEBUG>=0:
+        if DEBUG>-1:
             tf.print("Check: ", valid)
 
         if DEBUG>5:
@@ -162,20 +182,16 @@ class TensorPlan(ABC):
         metric=self.problem.quality_metrics[0]
         metric_expr=str(metric.expression)
         satisfied=1
-        for goal in self.problem.goals:
-            fluent_name = goal.get_name()
-            if goal.node_type != OperatorKind.FLUENT_EXP:
-                value = self.converter.compute_condition_value(goal)
-                current_value = value
-            else:
-                current_value = state[fluent_name]
+        for goal in self.goal_list:
+            value = TensorAction.evaluate_condition(goal, self.converter)
+            current_value = value
 
-            if current_value <= 0:
-                tf.print("Fluent unsatisfied: ", fluent_name,", value: ",current_value)
+            if current_value < 0:
+                tf.print("Fluent unsatisfied indx: ", goal,", value: ",current_value)
                 satisfied=satisfied*0 # Needed for tf function; use a break?
      
                 metric_value = state[metric_expr]+ UNSAT_PENALTY  #  *  current_value
-                state[metric_expr]=metric_value
+                state.insert(metric_expr,metric_value)
      
 
         return satisfied
@@ -207,20 +223,15 @@ class TensorPlan(ABC):
         metric=problem.quality_metrics[0]
         metric_value = state[str(metric.expression)]
         metric_applicable = 0 # len(plan.actions)
-        #for step,act in self.actions_sequence.items():
-        #    if act.is_applicable() <= 0:
-        #        tf.print("Action ", step," not applicable:", act.get_name(), act._are_preconditions_satisfied)
-        for step, state in list(self.states_sequence.items())[:-1]:
-
-            if state[ARE_PREC_SATISF_STR] > 0:
-                if DEBUG > 1:
-                    tf.print("Action in ", step, " is applicable: ", self.actions_sequence[step].get_name())
+        for step,act in self.actions_sequence.items():
+            if act.is_applicable() == True:
                 metric_applicable += 1
+                if DEBUG > 1:
+                    tf.print("Action in ", step, " is applicable: ", act.get_name())
             else:
                 valid=0
                 if DEBUG > 0:
-                    tf.print("Action in ", step, " is NOT applicable: ", tensor_action.get_name())
-                    
+                    tf.print("Action in ", step, " is NOT applicable: ", act.get_name())
                 
         return {
             "valid": valid,
@@ -241,21 +252,6 @@ class TensorPlan(ABC):
         return self.new_state
  
 
-    def reset_dict_states_sequence(self, original_state):
-        """ 
-        Reset the states sequence to the original state.
-        """
-        assign_ops = []
-        for state in self.states_sequence.values():
-            #Creare un elenco di operazioni di assegnazione (assign_ops
-            assign = [state[key].assign(original_state[key]) for key in original_state]
-            assign_ops.append(assign)
-
-        # Raggruppare tutte le operazioni in una singola operazione batch
-        assign_batch_op = tf.group(*assign_ops)
-
-        # Esegui tutte le operazioni di copia in un colpo solo
-        assign_batch_op
 
 
 class TfPlan(TensorPlan):

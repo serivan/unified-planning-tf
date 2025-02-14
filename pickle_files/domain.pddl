@@ -12,7 +12,7 @@
   )
   (:predicates
     (active ?d - day)
-    (next ?d1 - day ?d2 - day)
+    (next_day ?d1 - day ?d2 - day)
     (evaluated_network)
   )
   (:functions
@@ -62,7 +62,7 @@
   )
   (:action advance_day
     :parameters ( ?d1 - day ?d2 - day)
-    :precondition (and (active ?d1) (next ?d1 ?d2) (evaluated_network) (< 3317.789292 (- (storage hoa_binh_dam) (* 0.0864 (+ (release_spillways hoa_binh_dam) (+ (release_bottom hoa_binh_dam) (release hoa_binh_dam)))))) (< (- (storage hoa_binh_dam) (* 0.0864 (+ (release_spillways hoa_binh_dam) (+ (release_bottom hoa_binh_dam) (release hoa_binh_dam))))) 10571.6753) (< 1.4 (level hanoi)) (< (level hanoi) 11.5) (< (+ 500 (agricultural_demand ?d1)) (+ 347.13438 (flow son_tay))))
+    :precondition (and (active ?d1) (next_day ?d1 ?d2) (evaluated_network) (< 3317.789292 (- (storage hoa_binh_dam) (* 0.0864 (+ (release_spillways hoa_binh_dam) (+ (release_bottom hoa_binh_dam) (release hoa_binh_dam)))))) (< (- (storage hoa_binh_dam) (* 0.0864 (+ (release_spillways hoa_binh_dam) (+ (release_bottom hoa_binh_dam) (release hoa_binh_dam))))) 10571.6753) (< 1.4 (level hanoi)) (< (level hanoi) 11.5) (< (+ 500 (agricultural_demand ?d1)) (+ 347.13438 (flow son_tay))))
     :effect (and (not (active ?d1)) (active ?d2) (not (evaluated_network)) (assign (release hoa_binh_dam) 214) (assign (release_bottom hoa_binh_dam) 0) (assign (release_spillways hoa_binh_dam) 0) (when
         (<= (storage hoa_binh_dam) 4444.1)
         (assign
