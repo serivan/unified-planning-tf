@@ -121,8 +121,8 @@ start_time = time.time()
 seq_plan=TfPlan(w_problem, tensor_state, sol_plan)
 end_time = time.time()
 print("Creation time of act_sequence:", end_time - start_time, "seconds")
-state=seq_plan.get_final_state()
-print("Creation Objective function: ", state["objective"] )
+#state=seq_plan.get_final_state()
+#print("Creation Objective function: ", state["objective"] )
 os.sync()
 #DEBUG=6
 print()
@@ -135,8 +135,8 @@ result= 0
 #result= seq_plan.preprocess_apply(initial_state)
 end_time = time.time()
 print("Preprocess:", end_time - start_time, "seconds, result: ", result)
-state=seq_plan.get_final_state()
-print("Objective function: ", state["objective"] )
+#state=seq_plan.get_final_state()
+#print("Objective function: ", state["objective"] )
 
 
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
@@ -148,7 +148,8 @@ end_time = time.time()
 print("Forward1A:", end_time - start_time, "seconds, result: ", result)
 state=seq_plan.get_final_state()
 print("Objective function: ", state["objective"] )
-
+os.sync()
+#exit()
 
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
@@ -227,6 +228,8 @@ for i in range(0,100):
   end_time = time.time()
   delta=end_time - start_time
   print("Forward-"+str(i)+": ", end_time - start_time, "seconds, result: ", result)
+  #state=seq_plan.get_final_state()
+  #print("Objective function: ", state["objective"] )
   times.append(delta)
   print()
 
@@ -234,3 +237,5 @@ print("Average time: ", np.mean(times), "seconds")
 print("Standard deviation: ", np.std(times), "seconds")
 
 os.sync()
+
+# %%

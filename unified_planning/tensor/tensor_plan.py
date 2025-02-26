@@ -25,7 +25,8 @@ class TensorPlan(ABC):
         """
         self.plan = plan
         self.tensor_state = state
-        self.initial_state = self.curr_state =state.get_hash_state()
+        self.initial_state=state.get_initial_hash_state()
+        self.curr_state =state.get_hash_state()
         self.actions_sequence = {}  # Dictionary to store executed actions
         self.new_state = {}     # The resulting state after applying actions
         self.state_updates = {} # The sequence of states updates after applying actions 
@@ -50,10 +51,10 @@ class TensorPlan(ABC):
             raise ValueError("Invalid action type. Use 'TfAction' or 'TorchAction'.")
          
         # Build the sequence of actions
-        self.build(self.initial_state)
+        self.build()
 
 
-    def build(self, my_state):
+    def build(self):
         """
         Build a sequence of actions on the given state.
 
@@ -61,11 +62,16 @@ class TensorPlan(ABC):
         :return: The resulting state after all actions have been applied.
         """
         if DEBUG>0:
-            print("Building plan")
+            print("..Building plan")
         #curr_state =self.create_copy_state(my_state)
-        curr_state =TensorState.shallow_copy_hash_state(my_state)
+        
+        curr_state =self.curr_state
 
-        self.states_updates={}
+        if DEBUG>2:
+            print("Build Initial state: ")
+            TensorState.print_filtered_hash_state(curr_state,["next"])
+        all_keys=[]
+        self.states_updates=None
         for i, act in enumerate(self.plan.actions):
             tensor_action = self.new_action(problem=self.problem, plan_action=act, converter=self.converter, state=curr_state)
             self.actions_sequence[i] = tensor_action
@@ -75,28 +81,37 @@ class TensorPlan(ABC):
                 print("Action: ", tensor_action) 
             
             tensor_action.set_curr_state(curr_state)
-            new_state= curr_state 
-            # Apply the action to the current state
-            state_update=tensor_action.no_tf_apply_action(tensor_action.get_up_action_id())
-            for key, value in state_update.items():
-                if key == ARE_PREC_SATISF_STR:
-                    if len(self.state_updates)>0 and  len(self.state_updates[i])>0:
-                        curr_update=self.state_updates[i]
-                        curr_update[ARE_PREC_SATISF_STR]=value
-                    else:
-                        self.state_updates[i]={key: value}
-                else:
-                    new_state.insert(key,value)    
+            
+            #GlobalData.tf_class_predicates_list=tf.stack(GlobalData._class_predicates_list)
+            #new_state= curr_state 
+            ## Apply the action to the current state
+            #state_update=tensor_action.no_tf_apply_action()
+
+            ## Retrieve all keys and values from state_update    
+            #keys = state_update.export()[0]  # Extract keys
+            #values = state_update.export()[1]  # Extract values
+            keys=tensor_action.act_effects_list
+            for key in keys:
+                exists = tf.reduce_any(tf.equal(key, all_keys))
+                if not exists:
+                    all_keys.append(key)
+
+            # Merge state_update into new_state
+            #new_state.insert(keys, values)
+
 
             # Update the new state after applying the action
-            tensor_action.set_new_state(new_state)
-            self.state_updates[i+1] = state_update
-            self.new_state = new_state
-            curr_state = new_state  # Update the reference for the next iteration
+            #tensor_action.set_new_state(new_state)
+            #self.state_updates[i+1] = state_update
+            #self.new_state = new_state
+            #curr_state = new_state  # Update the reference for the next iteration
 
-            if DEBUG>5:
-                print("State after action:", end=":: ")
-                TensorState.print_filtered_hash_state(new_state,["next"])
+            #if DEBUG > -3:
+            #    print("State updates:", end=":: ")
+            #    TensorState.print_filtered_hash_state(state_update,["next"])
+            #if DEBUG>5:
+            #    print("State after action:", end=":: ")
+            #    TensorState.print_filtered_hash_state(new_state,["next"])
             #print("New state:", new_state)
         
 
@@ -108,7 +123,8 @@ class TensorPlan(ABC):
             self.goal_list.append(goal_position)
 
         #Provide a tensor representation of the predicates
-        GlobalData._class_predicates_list=tf.stack(GlobalData._class_predicates_list)
+        GlobalData.tf_class_predicates_list=tf.stack(GlobalData._class_predicates_list)
+        self.tensor_state.restore_hash_state(all_keys)
        
 
     def forward(self, dict_state):
@@ -120,7 +136,8 @@ class TensorPlan(ABC):
         """
         if DEBUG > 0:
             print(".forward")
-        curr_state = TensorState.shallow_copy_hash_state(self.initial_state)
+        curr_state = self.tensor_state.get_hash_state()
+
         self.state_updates[0]={}
         
         for fluent, value in dict_state.items():
@@ -128,28 +145,38 @@ class TensorPlan(ABC):
             #print("Initial value:", value)
             curr_state.insert(tf.constant(fluent,tf.string),value)
     
+        if DEBUG>2:
+            print("Initial state: ", curr_state)
+            #print(tf.py_function(func=TensorState.print_filtered_hash_state,inp=(curr_state,["next"]),Tout=tf.string))
+        #all_keys=[]
         step=0
         for tensor_action in self.actions_sequence.values():    
             #print("Action: ", tensor_action)
             #self.copy_state_in_new_state(curr_state, new_state)    
             # Apply the action to the current state
             if DEBUG>2:
-                print("Apply Action in ", step, " name: ", tensor_action.get_name())
+                print("\nApply Action in ", step, " name: ", tensor_action.get_name())
             tensor_action.set_curr_state(curr_state)
-            
+
+            tensor_action.converter.set_state(self.curr_state)
+        
             new_state= curr_state
-            state_update=tensor_action.apply_action(tensor_action.get_up_action_id()) 
+            state_update=tensor_action.apply_action() 
             if DEBUG >2:
                 print("State update: ", state_update)   
-            for key, value in state_update.items():
-                if key == ARE_PREC_SATISF_STR:
-                    if len(self.state_updates)>0 and  len(self.state_updates[step])>0:
-                        curr_update=self.state_updates[step]
-                        curr_update[ARE_PREC_SATISF_STR]=value
-                    else:
-                        self.state_updates[step]={key: value}
-                else:
-                    new_state.insert(key,value)    
+            
+            # Retrieve all keys and values from state_update    
+            keys = state_update.export()[0]  # Extract keys
+            values = state_update.export()[1]  # Extract values
+
+            #for key in keys:
+            #    exists = tf.reduce_any(tf.equal(key, all_keys))
+            #    if not exists:
+            #        all_keys.append(key)
+
+            # Merge state_update into new_state
+            new_state.insert(keys, values)
+
 
             # Update the new state after applying the action
             tensor_action.set_new_state(new_state)
@@ -167,7 +194,12 @@ class TensorPlan(ABC):
         if DEBUG>5:
             print(new_state)
             print()
-        return new_state[str(self.problem.quality_metrics[0].expression)]
+
+        quality=new_state[str(self.problem.quality_metrics[0].expression)]
+        
+        self.tensor_state.restore_hash_state()
+
+        return quality
         #return valid["metric_value"]
         
     
@@ -184,10 +216,9 @@ class TensorPlan(ABC):
         satisfied=1
         for goal in self.goal_list:
             value = TensorAction.evaluate_condition(goal, self.converter)
-            current_value = value
 
-            if current_value < 0:
-                tf.print("Fluent unsatisfied indx: ", goal,", value: ",current_value)
+            if value < 0:
+                tf.print("Fluent unsatisfied indx: ", goal,", value: ",value)
                 satisfied=satisfied*0 # Needed for tf function; use a break?
      
                 metric_value = state[metric_expr]+ UNSAT_PENALTY  #  *  current_value

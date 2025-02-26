@@ -68,7 +68,7 @@ def tensor_convert(node, are_prec_satisfied, state):
                 func = sympy_to_tensor_map.get(type(node))
                 base, exp = [tensor_convert(arg, are_prec_satisfied, state) for arg in node.args]
                 value = func(base, exp)
-            elif  tf.not_equal(self.state.lookup(tf.constant(node_name, tf.string)), MISSING_VAL): 
+            elif  tf.not_equal(self.state.lookup(tf.constant(node_name, tf.string)), MISSING_VALUE): 
                 if DEBUG > 5:
                     tf.print("Node:", node_name, "in state:", state[node_name])
                 value = self.state.lookup(tf.constant(node_name, tf.string))
@@ -319,7 +319,7 @@ class SympyToTensorConverter(ABC):
                     results[id(current)] = are_prec_satisfied
                 elif node_name.startswith(LIFTED_STR):
                     results[id(current)] = self.extract_from_lifted(node_name, predicates_indexes)
-                elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VAL):
+                elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE):
                     results[id(current)] = self.state.lookup(lookup_key)
                 else:
                     results[id(current)] = tf.constant(-1.0)
@@ -345,7 +345,7 @@ class SympyToTensorConverter(ABC):
                 elif isinstance(current, sympy.Pow):
                     base, exp = results[id(args[0])], results[id(args[1])]
                     results[id(current)] = self.sympy_to_tensor_map.get(type(current))(base, exp)
-                elif tf.not_equal(self.state.lookup(tf.constant(str(current), tf.string)), MISSING_VAL):
+                elif tf.not_equal(self.state.lookup(tf.constant(str(current), tf.string)), MISSING_VALUE):
                     results[id(current)] = self.state.lookup(tf.constant(str(current), tf.string))
                 elif tf.cond(tf.equal(tf.strings.substr(tf.constant(str(current), tf.string), 0, len(LIFTED_STR)), LIFTED_STR), 
                              lambda: True, lambda: False):
@@ -389,7 +389,7 @@ class SympyToTensorConverter(ABC):
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
                 value=self.extract_from_lifted(lookup_key, predicates_indexes)
-            elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VAL): 
+            elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
                     print("Node:", node_name, "in state:", self.state[node_name])
                 value = self.state.lookup(lookup_key)
@@ -408,7 +408,7 @@ class SympyToTensorConverter(ABC):
                 func = self.sympy_to_tensor_map.get(type(node))
                 base, exp = [self._tensor_convert(arg, predicates_indexes, are_prec_satisfied) for arg in node.args]
                 value = func(base, exp)      
-            #elif  tf.not_equal(self.state.lookup(lookup_key), MISSING_VAL):
+            #elif  tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE):
             #    if DEBUG > 5:
             #        tf.print("Node:", node_name, "in state:", self.state[node_name])
             #    value = self.state.lookup(lookup_key)
@@ -424,7 +424,7 @@ class SympyToTensorConverter(ABC):
             raise ValueError(f"Unsupported node type: {type(node)}")
         
         if DEBUG > 5:
-            print(node_name, ":=", value)
+            print(str(node), ":=", value)
         
         return value
 
@@ -432,11 +432,12 @@ class SympyToTensorConverter(ABC):
     def extract_from_lifted(self, node_name: tf.Tensor, predicates_indexes: tf.Tensor):
         pos_str = tf.strings.regex_replace(node_name, LIFTED_STR, "")
         pos = tf.strings.to_number(pos_str, out_type=tf.int32)  # Convert to integer
-        if DEBUG > 5:
-            tf.print("Pos: ", pos, "Predicates indexes: ", predicates_indexes)
         indx = predicates_indexes[pos] #tf.gather(predicates_indexes, pos)  # Tensor-safe indexing
         name = GlobalData.get_key_from_indx_predicates_list(indx)
-
+        if DEBUG > 4:
+            print("Fluent: ", name," val: ", self.state.lookup(name))
+        if DEBUG > 6:          
+            printf(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
         return self.state.lookup(name)
 
 

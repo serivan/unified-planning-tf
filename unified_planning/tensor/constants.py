@@ -17,13 +17,13 @@ TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu
 TF_ZERO=tf.constant(0.0, dtype=tf.float32)
 TF_SAT=tf.constant(1.0, dtype=tf.float32)
-MISSING_VAL=TF_UN_SAT=tf.constant(-1.0, dtype=tf.float32)
-
+MISSING_VALUE=-1 #tf.constant(-1.0, dtype=tf.float32)
+TF_UN_SAT=tf.constant(-1.0, dtype=tf.float32)
 NUM_ZERO=TF_ZERO.numpy() 
 NUM_SAT=TF_SAT.numpy()
 NUM_UN_SAT=TF_UN_SAT.numpy()
 
-UNSAT_PENALTY=50000.0
+UNSAT_PENALTY=tf.constant(50000.0, dtype=tf.float32)
 def grep( string, pattern):
     """
     Mimic the behavior of the grep command on a Python string.
@@ -46,10 +46,13 @@ class GlobalData():
     Class to store global data.
     """
   
-    _class_up_actions_map={} # Map to store the up action and the corresponding ID
+    _class_lifted_actions_object_map={} # Map to store the up action and the corresponding lifted object 
 
-    _class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
-    _class_predicates_map=MutableHashTable(key_dtype=tf.string, value_dtype=tf.int64, default_value=-1) # Map to store the predicates
+    _class_lifted_actions_id_map={} # Map to store the up action and the corresponding ID
+
+    _class_predicates_list_string=_class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
+    tf_class_predicates_list= None
+    _class_predicates_map=MutableHashTable(key_dtype=tf.string, value_dtype=tf.int64, default_value=MISSING_VALUE) # Map to store the predicates
    
     _class_conditions_list=[]  # List to store the preconditions
     _class_conditions_map={} # Map to store the preconditions
@@ -80,7 +83,7 @@ class GlobalData():
                     current_value = value
                 table_kv.insert(key, current_value )
                 current_value = table_kv.lookup(key)
-                list_vk.insert(current_value, key)
+                list_vk.insert(current_value, str(key_elem))
 
             assigned_values.append(current_value.numpy())  # Store result
 
@@ -102,6 +105,16 @@ class GlobalData():
         return keys
 
 
+
+    def _get_values_from_table(indexes, table_kv):
+        '''
+        Retrieves keys corresponding to the given indexes from the corresponding indexes
+        '''
+        keys=[]  
+        for indx in indexes:
+            keys.append(table_kv.lookup(str(indx)))
+        return keys
+    
     def insert_predicates_in_map(keys):
         
         table_kv=GlobalData._class_predicates_map
@@ -114,7 +127,7 @@ class GlobalData():
         '''
         Retrieves keys corresponding to the given indexes from the corresponding indexes
         '''
-        list_vk=GlobalData._class_predicates_list
+        list_vk=GlobalData.tf_class_predicates_list
         key = list_vk[indx]
         
         return key
@@ -123,8 +136,15 @@ class GlobalData():
         '''
         Retrieves keys corresponding to the given indexes from the corresponding indexes
         '''
-        list_vk=GlobalData._class_predicates_list
+        list_vk=GlobalData.tf_class_predicates_list
         return GlobalData._get_keys_from_list(indexes, list_vk)
+
+    def get_values_from_predicates_list(indexes):
+        '''
+        Retrieves keys corresponding to the given indexes from the corresponding indexes
+        '''
+        table_kv=GlobalData._class_predicates_map
+        return GlobalData._get_values_from_table(indexes, table_kv)
 
     def set(self, key, value):
         """

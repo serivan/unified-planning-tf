@@ -29,14 +29,20 @@ class TensorState(ABC):
         self._trainable_fluents= [] # List to store the trainable fluents
         self._non_trainable_fluents= [] # List to store the non-trainable fluents
         self.action=None
+        self._restore_keys=None
         # Populate the initial state (delegated to a subclass, if necessary)
         if initialize==True:
             self._initialize_state()   
 
         
         # Create a MutableHashTable
-        default_value = MISSING_VAL  # Default value if a key is not found
+        default_value = MISSING_VALUE  # Default value if a key is not found
         self._hash_state = MutableHashTable(
+            key_dtype=tf.string, 
+            value_dtype=tf.float32, 
+            default_value=default_value
+        )
+        self._initial_hash_state = MutableHashTable(
             key_dtype=tf.string, 
             value_dtype=tf.float32, 
             default_value=default_value
@@ -48,6 +54,8 @@ class TensorState(ABC):
 
         # Insert data into the hash table
         self._hash_state.insert(keys_tensor, values_tensor)
+        # Insert data into the curr_hash table
+        self._initial_hash_state.insert(keys_tensor, values_tensor)
 
  
     def _initialize_state(self):
@@ -72,6 +80,28 @@ class TensorState(ABC):
         #Add the are_preconditions_satisfied fluent
         #self._non_trainable_fluents.append(ARE_PREC_SATISF_STR)
         
+    def restore_hash_state(self, restore_keys=None): 
+        if restore_keys is None:
+            if self._restore_keys is None:
+                restore_keys = self._initial_hash_state.export()[0]
+            else:
+                restore_keys = self._restore_keys  
+        else:
+            self._restore_keys = restore_keys
+        #            restore_keys = self._initial_hash_state.export()[0]
+        #            restore_values = self._initial_hash_state.export()[1]
+         
+        resore_values=self._initial_hash_state.lookup(restore_keys)
+        self._hash_state.insert(restore_keys, resore_values)
+    
+    def get_hash_state(self):
+        """
+        Returns the current state.
+
+        :return: Dictionary of fluent names and their corresponding values.
+        """
+        return self._hash_state
+        
     
     def get_state(self):
         """
@@ -90,6 +120,14 @@ class TensorState(ABC):
         :return: Dictionary of fluent names and their corresponding values.
         """
         return self._hash_state
+    
+    def get_initial_hash_state(self):
+        """
+        Returns the current state.
+
+        :return: Dictionary of fluent names and their corresponding values.
+        """
+        return self._initial_hash_state
 
     def __ref__(self):
         """
@@ -280,15 +318,28 @@ class TensorState(ABC):
 
         keys, values = state.export()  # Get all keys and values
         
-        for key, value in zip(keys.numpy(), values.numpy()):
+        for key, value in zip(keys, values):
             if  value!=0 and not any(excluded in str(key) for excluded in excluded_list) :
                 if value is tf.Tensor:
                     print_val= value.numpy()
                 else:
                     print_val=value
                 
-                print(key,": ", print_val, end=" -- ")
+                print(str(key.numpy()),": ", float(print_val), end=" -- ")
 
+
+    def print_mutable_hash_table(hash_table):
+        """
+        Print the contents of a MutableHashTable.
+
+        Args:
+            hash_table: The MutableHashTable to print.
+        """
+        keys = hash_table.export()[0]
+        values = hash_table.export()[1]
+
+        keys_values = tf.stack([keys, values], axis=1)
+        tf.print("MutableHashTable contents:\n", keys_values)
 
     @staticmethod
     def shallow_copy_hash_state(hash_state):
@@ -307,8 +358,8 @@ class TensorState(ABC):
         values_tensor = hash_state.lookup(keys_tensor)
     
         # Create a new hash table with the same default value
-        default_value = MISSING_VAL  # Default value if a key is not found
-        new_hash_state = MutableHashTable(
+        default_value = MISSING_VALUE  # Default value if a key is not found
+        new_hash_state =  MutableHashTable(
             key_dtype=hash_state.key_dtype, 
             value_dtype=hash_state.value_dtype, 
             default_value=default_value
