@@ -22,7 +22,7 @@ from unified_planning.engines.compilers import Grounder, GrounderHelper
 from unified_planning.tensor.tensor_state import TensorState, TfState
 from unified_planning.tensor.tensor_fluent import TensorFluent, TfFluent
 
-from unified_planning.tensor.converter import tensor_convert
+from unified_planning.tensor.converter import SympyToTfConverter
 
 from tensorflow.lookup.experimental import MutableHashTable
 
@@ -59,7 +59,7 @@ class EffectData:
                 f"sympy_unsat={self.sympy_unsat})")
 
 
-# TensorAction class modified to use the SympyToTensorConverter
+# TensorAction class modified to use the SympyToTfConverter
 class TensorAction(ABC):
     _class_action_id = 0  # Class attribute to keep track of the class ID
 
@@ -110,6 +110,7 @@ class TensorAction(ABC):
     def get_predicates_list(self):
         return self._predicates_list
     
+    #@tf.function
     def apply_action(self, predicates_indexes, curr_state: MutableHashTable): #: up.tensor.TensorState):
         """
         Apply an action to the state if the preconditions are met, and manage the effects.
@@ -139,21 +140,9 @@ class TensorAction(ABC):
         # Apply effects if preconditions are satisfied
         state_update=self.apply_effects(predicates_indexes)
 
-        state_update.insert(ARE_PREC_SATISF_STR,self._are_preconditions_satisfied) #UPDATE state_update to export value for tf.function
+        state_update.append((ARE_PREC_SATISF_STR,self._are_preconditions_satisfied)) #UPDATE state_update to export value for tf.function
    
-        # Update the metric value if the preconditions are not 
-        metric=self.problem.quality_metrics[0]
-        metric_expr=tf.constant(str(metric.expression), tf.string)
-        metric_value=0.0
-
-        if  tf.not_equal(state_update.lookup(metric_expr), MISSING_VALUE):
-            metric_value = state_update.lookup(metric_expr)
-        else:
-            metric_value = self.curr_state.lookup(metric_expr)
-
-        if self._are_preconditions_satisfied<0:
-            metric_value =  metric_value + UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(self._are_preconditions_satisfied)
-            state_update.insert(metric_expr, metric_value)
+ 
         #   if pos<0:
         #        pos=len(state_update)
      
@@ -223,7 +212,7 @@ class TensorAction(ABC):
         return cond_position
     
 
-    def evaluate_condition(condition: int, converter, predicates_indexes=None):
+    def evaluate_condition(condition: int, state, predicates_indexes=None):
         """
         Evaluates a single precondition and returns the resulting value.
         
@@ -236,7 +225,25 @@ class TensorAction(ABC):
         sympy_expr = GlobalData._class_conditions_list[condition].sympy_expr
         if predicates_indexes is None:
             predicates_indexes=GlobalData._class_conditions_list[condition].predicates_indexes
-        value= converter.convert(sympy_expr, predicates_indexes)
+        value=  SympyToTfConverter.convert_new(sympy_expr, predicates_indexes, state)
+        
+        return value 
+
+
+    def _evaluate_condition(self, condition: int, state, predicates_indexes=None):
+        """
+        Evaluates a single precondition and returns the resulting value.
+        
+        Args:
+            precondition (Precondition): A precondition to evaluate.
+        
+        Returns:
+            Tensor: The evaluation result of the precondition.
+        """
+        sympy_expr = GlobalData._class_conditions_list[condition].sympy_expr
+        if predicates_indexes is None:
+            predicates_indexes=GlobalData._class_conditions_list[condition].predicates_indexes
+        value=  self.converter.convert(sympy_expr, predicates_indexes, state)
         
         return value 
 
@@ -251,9 +258,9 @@ class TensorAction(ABC):
     def is_applicable (self):
         return self._are_preconditions_satisfied>=0
     
-
-    @tf.function
-    def _apply_single_effect(effect_indx, predicates_indexes, converter):
+    #
+    #@tf.function
+    def _apply_single_effect(self, effect_indx, predicates_indexes, state):
         """
         Apply a single effect to the new state.
 
@@ -261,7 +268,7 @@ class TensorAction(ABC):
             effect (Effect): The effect to apply.
             curr_state (dict): The initial state.
         """
-        if DEBUG>-5:
+        if DEBUG>5: #XXX
             print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
         effect_data = GlobalData._class_effects_list[effect_indx]
         #fl_name=GlobalData._class_predicates_list_string[ predicates_indexes[effect_data.effect_predicates_position]]
@@ -284,14 +291,60 @@ class TensorAction(ABC):
         if predicates_indexes is None:
             predicates_indexes=effect_data.predicates_indexes
 
-        result= converter.convert(sympy_expr, predicates_indexes ,  are_prec_satisfied)
-        #result= tensorconverter(sympy_expr, are_prec_satisfied, self.curr_state)
+        result= SympyToTfConverter.convert_new(sympy_expr, predicates_indexes , state, are_prec_satisfied)
+        #result= self.converter.convert(sympy_expr, predicates_indexes , are_prec_satisfied)
         if(DEBUG>5):
             print("Result: ", result)
             tf.print("TResult: ", result)
 
         if DEBUG>2:
-            value=float(self.curr_state[fl_name])
+            value=float(state[fl_name])
+            print("..compute_effect_value: ", fl_name, " - indx: ", effect_indx)
+            print("-->",fl_name,"- init:",value, " delta:", result-value, " new: ", result)
+
+        return (fl_name, result)
+
+    #
+    #@tf.function
+    def apply_single_effect(effect_indx, predicates_indexes, state):
+        """
+        Apply a single effect to the new state.
+
+        Args:
+            effect (Effect): The effect to apply.
+            curr_state (dict): The initial state.
+        """
+        if DEBUG>5: #XXX
+            print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
+        effect_data = GlobalData._class_effects_list[effect_indx]
+        #fl_name=GlobalData._class_predicates_list_string[ predicates_indexes[effect_data.effect_predicates_position]]
+        fl_name = GlobalData.get_key_from_indx_predicates_list( predicates_indexes[effect_data.effect_predicates_position])
+        #fl_name=fl_string.numpy().decode("utf-8")
+
+        if DEBUG>4:
+            print("Effect:", effect_data.effect, " fl_name: ", fl_name)
+        result=0.0
+
+        if(DEBUG>2):
+            print("..compute_effect_value: ", fl_name, " - indx: ", effect_indx)
+        
+        are_prec_satisfied=1.0 #self._are_preconditions_satisfied
+        sympy_expr = effect_data.sympy_sat
+        result=0.0
+        if (are_prec_satisfied < 0.0):
+            sympy_expr = effect_data.sympy_unsat
+        
+        if predicates_indexes is None:
+            predicates_indexes=effect_data.predicates_indexes
+
+        result= SympyToTfConverter.convert_new(sympy_expr, predicates_indexes , state, are_prec_satisfied)
+        
+        if(DEBUG>5):
+            print("Result: ", result)
+            tf.print("TResult: ", result)
+
+        if DEBUG>2:
+            value=float(state[fl_name])
             print("..compute_effect_value: ", fl_name, " - indx: ", effect_indx)
             print("-->",fl_name,"- init:",value, " delta:", result-value, " new: ", result)
 
@@ -480,9 +533,9 @@ class TfLiftedAction (TensorAction):
             Tensor: The evaluation result of the precondition.
         """
         converter= self.converter
-        return TensorAction.evaluate_condition(condition, converter, predicates_indexes)
+        return self._evaluate_condition(condition, self.curr_state, predicates_indexes)
 
-
+    @tf.function
     def evaluate_preconditions(self, predicates_indexes,  state=None):
         """
         Evaluates all preconditions and returns whether they are satisfied.
@@ -503,7 +556,8 @@ class TfLiftedAction (TensorAction):
         for prec in preconditions:
             if DEBUG>2:            
                 print("Evaluating precondition:", prec)
-            value = self.evaluate_condition(prec, predicates_indexes)
+            #value = self.evaluate_condition(prec, predicates_indexes)
+            value = TensorAction.evaluate_condition(prec, self.curr_state, predicates_indexes)
             result = tf.minimum(value, 0.0) # 0.0 if the precondition is satisfied, negative otherwise
             satisfied = tf.add(satisfied, result)
 
@@ -526,73 +580,50 @@ class TfLiftedAction (TensorAction):
             effects (list): A list of effect objects to apply.
             new_state (dict): The new state that will be modified.
         """
-        if DEBUG>-5:
+        # Update the metric value if the preconditions are not 
+        #metric=self.problem.quality_metrics[0]
+        #metric_expr=tf.constant(str(metric.expression), tf.string)
+        #metric_value_found=False
+        #metric_value=0.0        
+
+        if DEBUG>5: #XXX
             print("\nApply effects, act: ", self.get_name(), " id:", self.get_action_id()," predicates: ", predicates_indexes)
         effects = self._act_effects_list
-        #self.converter = self.converter_funct(curr_state, self)#  converter (SympyToTensorConverter): The converter instance for SymPy to TensorFlow conversion.
-        out_result=MutableHashTable(key_dtype=tf.string, value_dtype=tf.float32, default_value=MISSING_VALUE)
+        #self.converter = self.converter_funct(curr_state, self)#  converter (SympyToTfConverter): The converter instance for SymPy to TensorFlow conversion.
+        #out_result=MutableHashTable(key_dtype=tf.string, value_dtype=tf.float32, default_value=MISSING_VALUE)
+        out_result=list()
         for effect_indx in effects:
             effect_data=GlobalData._class_effects_list[effect_indx]
             if DEBUG>5:
                 print("Applying effect:", effect_data.effect)
             result=1.0
             if effect_data.condition>=0:
-                result = self.evaluate_condition(effect_data.condition, predicates_indexes) 
+                #result = self.evaluate_condition(effect_data.condition, predicates_indexes) 
+                result=TensorAction.evaluate_condition(effect_data.condition, self.curr_state, predicates_indexes)
                 if DEBUG>4:
-                    print("Condition: ", effect_data.condition)
                     print("Condition result:", result)
+            #if result>0:
+            key,value=self.apply_single_effect(effect_indx, predicates_indexes, self.curr_state)
+                #if tf.equal(key, metric_expr): # XXX
+                #    metric_value_found = True
+                #    if self._are_preconditions_satisfied<0:
+                #        value = value + UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(self._are_preconditions_satisfied)
             if result>0:
-                key,value=self._apply_single_effect(effect_indx, predicates_indexes)
-                out_result.insert(key, value)
+                out_result.append((key,value))
+
+        #if self._are_preconditions_satisfied<0:
+        #    if metric_value_found==False:
+        #        metric_value = self.curr_state.lookup(metric_expr)
+        #        metric_value =  metric_value + UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(self._are_preconditions_satisfied)
+        #        out_result.append((metric_expr, metric_value))
         
         return out_result
 
     #@tf.function
-    def _apply_single_effect(self, effect_indx, predicates_indexes):
-        return TensorAction._apply_single_effect(effect_indx, predicates_indexes, self.converter)
+    def apply_single_effect(self, effect_indx, predicates_indexes, state):
+        return TensorAction.apply_single_effect(effect_indx, predicates_indexes, state)
 
 
-    def _apply_single_effect_old(self, effect_indx, predicates_indexes):
-        """
-        Apply a single effect to the new state.
-
-        Args:
-            effect (Effect): The effect to apply.
-            curr_state (dict): The initial state.
-        """
-        effect_data = GlobalData._class_effects_list[effect_indx]
-        #fl_name=GlobalData._class_predicates_list_string[ predicates_indexes[effect_data.effect_predicates_position]]
-        fl_name = GlobalData.get_key_from_indx_predicates_list( predicates_indexes[effect_data.effect_predicates_position])
-        #fl_name=fl_string.numpy().decode("utf-8")
-
-        if DEBUG>4:
-            print("Effect:", effect_data.effect, " fl_name: ", fl_name)
-        result=0.0
-
-        if(DEBUG>2):
-            print("..compute_effect_value: ", fl_name, " - indx: ", effect_indx)
-        
-        are_prec_satisfied=1.0 #self._are_preconditions_satisfied
-        sympy_expr = effect_data.sympy_sat
-        result=0.0
-        if (are_prec_satisfied < 0.0):
-            sympy_expr = effect_data.sympy_unsat
-        
-        if predicates_indexes is None:
-            predicates_indexes=effect_data.predicates_indexes
-
-        result= self.converter.convert(sympy_expr, predicates_indexes ,  are_prec_satisfied)
-        #result= tensorconverter(sympy_expr, are_prec_satisfied, self.curr_state)
-        if(DEBUG>5):
-            print("Result: ", result)
-            tf.print("TResult: ", result)
-
-        if DEBUG>2:
-            value=float(self.curr_state[fl_name])
-            print("..compute_effect_value: ", fl_name, " - indx: ", effect_indx)
-            print("-->",fl_name,"- init:",value, " delta:", result-value, " new: ", result)
-
-        return (fl_name, result)
     
 
 class TfAction(TensorAction):

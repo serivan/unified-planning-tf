@@ -108,11 +108,11 @@ print("State creation:", end_time - start_time, "seconds")
 print()
 os.sync()
 
-@tf.function(reduce_retracing=True)
+@tf.function  #(reduce_retracing=True) #(jit_compile=True)
 def execute(plan, initial_state):
   result= plan.forward(initial_state)
-  state=plan.get_final_state()
-  tf.print("E. Objective function: ", state["objective"] )
+  #state=plan.get_final_state()
+  #tf.print("E. Objective function: ", state["objective"] )
   return result
 
 initial_state={}
@@ -177,18 +177,23 @@ start_time = time.time()
 # Start profiling
 
 # Start TensorFlow Profiler
-logdir = "/tmp/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-tf.profiler.experimental.start(logdir)
-
-#with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
-#    result= execute(seq_plan, initial_state)
-#
-tf.profiler.experimental.stop()
-
-
-
+TBOARD=False
 use_callgraph = False
-if use_callgraph:
+use_cProfile = False
+
+
+#result= execute(seq_plan, initial_state)
+
+if TBOARD:
+  logdir = "/tmp/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+  tf.profiler.experimental.start(logdir)
+  print("TBoard Logdir: ", logdir)
+  with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
+      result= execute(seq_plan, initial_state)
+  #
+  tf.profiler.experimental.stop()
+
+elif use_callgraph:
   #Profiling
   # Generate call graph
   graphviz = GraphvizOutput(output_file='callgraph.svg')  # Vector format
@@ -202,10 +207,14 @@ if use_callgraph:
   from pycallgraph.output import GraphvizOutput
   with PyCallGraph(output=graphviz):
     result= execute(seq_plan, initial_state)
-else:
+
+elif use_cProfile:
   import cProfile
-  #cProfile.run('result= execute(seq_plan, initial_state)')
+  cProfile.run('result= execute(seq_plan, initial_state)')
+
+else:
   result= execute(seq_plan, initial_state)
+
 end_time = time.time()
 print("Forward2:", end_time - start_time, "seconds, result: ", result)
 print()

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import tensorflow as tf
+from tensorflow.math import tanh
 import unified_planning as up
 
 from unified_planning.model import OperatorKind
@@ -37,6 +38,10 @@ class TensorPlan(ABC):
 
         self.problem = problem
         self.goal_list=[]
+
+       # Update the metric value if the preconditions are not 
+        self._problem_metric=self.problem.quality_metrics[0]
+        self.tf_metric_expr=tf.constant(str(self._problem_metric.expression), tf.string)
 
         #self.problem_kind=pk = problem.kind
         #if not Grounder.supports(pk):
@@ -126,7 +131,7 @@ class TensorPlan(ABC):
         GlobalData.tf_class_predicates_list=tf.stack(GlobalData._class_predicates_list)
         self.tensor_state.restore_hash_state(all_keys)
        
-
+    #@tf.function
     def forward(self, dict_state):
         """
         Executes a sequence of actions on the given state.
@@ -165,19 +170,15 @@ class TensorPlan(ABC):
             if DEBUG >2:
                 print("State update: ", state_update)   
             
-            # Retrieve all keys and values from state_update    
-            keys = state_update.export()[0]  # Extract keys
-            values = state_update.export()[1]  # Extract values
-
-            #for key in keys:
-            #    exists = tf.reduce_any(tf.equal(key, all_keys))
-            #    if not exists:
-            #        all_keys.append(key)
-
-            # Merge state_update into new_state
-            new_state.insert(keys, values)
-
-
+            for key,value in state_update:
+                new_state.insert(key, value)
+ 
+            if tensor_action.is_applicable() == False:
+                #print("Action in ", step, " is NOT applicable: ", tensor_action.get_name())
+                satisfied= tensor_action.get_are_preconditions_satisfied()           
+                metric_value = new_state.lookup(self.tf_metric_expr)  
+                metric_value =  metric_value + UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(satisfied)
+                new_state.insert(self.tf_metric_expr, metric_value) 
             # Update the new state after applying the action
             tensor_action.set_new_state(new_state)
             self.state_updates[step+1] = state_update
@@ -215,8 +216,8 @@ class TensorPlan(ABC):
         metric_expr=str(metric.expression)
         satisfied=1
         for goal in self.goal_list:
-            value = TensorAction.evaluate_condition(goal, self.converter)
-
+            value = TensorAction.evaluate_condition(goal, state)
+           
             if value < 0:
                 tf.print("Fluent unsatisfied indx: ", goal,", value: ",value)
                 satisfied=satisfied*0 # Needed for tf function; use a break?

@@ -7,6 +7,7 @@ from tensorflow.lookup.experimental import MutableHashTable
 # Activate debug mode
 DEBUG = 0
 
+DEVICE='/CPU:0'
 # Define constants
 EPSILON=1e-7  #tf.keras.backend.epsilon()
 TENSOR_EPSILON = 1e-6

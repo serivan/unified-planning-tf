@@ -16,76 +16,6 @@ from unified_planning.model import EffectKind
 
 from unified_planning.tensor.constants import *
 
-sympy_to_tensor_map = {
-            sp.sin: tf.sin,
-            sp.cos: tf.cos,
-            sp.exp: tf.exp,
-            sp.log: tf.math.log,
-            sp.Max: tf.maximum,  # ReLU equivalent for Max
-            sp.Min: tf.minimum,  # ReLU equivalent for Max
-            sp.Pow: tf.pow,      # Add the pow function mapping
-        }
-
-
-def tensor_convert(node, are_prec_satisfied, state):
-        """
-        Recursively convert a SymPy node into a TensorFlow operation.
-        
-        Args:
-            node (sympy.Basic): A SymPy expression node to convert.
-        
-        Returns:
-            TensorFlow Tensor: The resulting tensor.
-        """
-        node_name = str(node)
-        if DEBUG > 4:
-            print("..tensor_convert:", node_name)
-        
-        if isinstance(node, tf.Tensor):
-            value = node
-        elif isinstance(node, sympy.logic.boolalg.BooleanTrue):
-            value = 1.0 #tf.constant(1.0)
-        elif isinstance(node, sympy.logic.boolalg.BooleanFalse):
-            value = -1.0 #tf.constant(-1.0)
-        elif isinstance(node, sympy.Symbol):
-            if node_name == ARE_PREC_SATISF_STR:
-                value = are_prec_satisfied
-            else:
-                value = state.lookup( tf.constant(node_name, tf.string)) 
-        elif isinstance(node, sympy.Number):
-            if node is tf.Tensor:
-                value = node
-            else:
-                value = float(node)
-        elif isinstance(node, sympy.Basic):
-            if isinstance(node, sympy.Add):
-                args = [tensor_convert(arg, are_prec_satisfied, state) for arg in node.args]
-                value = tf.add_n(args)
-            elif isinstance(node, sympy.Mul):
-                args = [tensor_convert(arg, are_prec_satisfied, state) for arg in node.args]
-                value = tf.math.reduce_prod(args)
-            elif isinstance(node, sympy.Pow):
-                func = sympy_to_tensor_map.get(type(node))
-                base, exp = [tensor_convert(arg, are_prec_satisfied, state) for arg in node.args]
-                value = func(base, exp)
-            elif  tf.not_equal(self.state.lookup(tf.constant(node_name, tf.string)), MISSING_VALUE): 
-                if DEBUG > 5:
-                    tf.print("Node:", node_name, "in state:", state[node_name])
-                value = self.state.lookup(tf.constant(node_name, tf.string))
-            else:
-                func = sympy_to_tensor_map.get(type(node))
-                if func:
-                    value = func(*[tensor_convert(arg, are_prec_satisfied, state) for arg in node.args])
-                else:
-                    raise ValueError(f"Unsupported operation: {type(node)}")
-        else:
-            raise ValueError(f"Unsupported node type: {type(node)}")
-        
-        if DEBUG > 5:
-            tf.print(node_name, ":=", value)
-        
-        return value
-
 
 
 class SympyToTensorConverter(ABC):
@@ -111,12 +41,34 @@ class SympyToTensorConverter(ABC):
 
         if(DEBUG>4):
             print("..convert")
-        result= self._tensor_convert(sympy_expr,predicates_indexes, are_prec_satisfied)
-        #result= tensor_convert(sympy_expr, are_prec_satisfied, self.state)
+        #result= self._tensor_convert(sympy_expr,predicates_indexes, are_prec_satisfied)
+        result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, state, are_prec_satisfied)
         if(DEBUG>4):
             print("Converter Result:", result)
         return result
     
+
+    def convert_new(sympy_expr,predicates_indexes, state, are_prec_satisfied=0.0):
+        """
+        Convert a SymPy expression to a TensorFlow tensor by recursively evaluating it.
+
+        Args:
+            sympy_expr (sympy.Expr): The SymPy expression to convert.
+
+        Returns:
+            TensorFlow Tensor: The resulting TensorFlow tensor.
+        """
+
+        if(DEBUG>4):
+            print("..convert")
+        #result= SympyToTensorConverter.tensor_convert_it(sympy_expr,predicates_indexes, are_prec_satisfied, state)
+        result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, state, are_prec_satisfied)
+        #result= tensor_convert(sympy_expr, are_prec_satisfied, self.state)
+        if(DEBUG>4):
+            print("Converter Result:", result)
+        return result
+
+
     def set_state(self, state):
         ''' Set the state to be used for conversion
             Args: state (State): The state to use
@@ -289,77 +241,149 @@ class SympyToTensorConverter(ABC):
         return result
 
     #@tf.function
-    def _tensor_convert_old(self, node, predicates_indexes, are_prec_satisfied=tf.constant(1.0)):
+    def tensor_convert(node, predicates_indexes, state, are_prec_satisfied=tf.constant(1.0)):
         """
-        Convert a SymPy node into a TensorFlow operation without recursion.
-
+        Recursively convert a SymPy node into a TensorFlow operation.
+        
         Args:
             node (sympy.Basic): A SymPy expression node to convert.
-
+        
         Returns:
             TensorFlow Tensor: The resulting tensor.
         """
-        stack = [(node, None)]  # Stack to simulate recursion, (node, parent_index)
-        results = {}  # Cache for computed values
-
-        while stack:
-            current, parent = stack.pop()
-
-            if isinstance(current, tf.Tensor):
-                results[id(current)] = current
-            elif isinstance(current, sympy.logic.boolalg.BooleanTrue):
-                results[id(current)] = tf.constant(1.0)
-            elif isinstance(current, sympy.logic.boolalg.BooleanFalse):
-                results[id(current)] = tf.constant(-1.0)
-            elif isinstance(current, sympy.Symbol):
-                node_name = str(current)
-                lookup_key = tf.constant(node_name, dtype=tf.string)
-
-                if node_name == ARE_PREC_SATISF_STR:
-                    results[id(current)] = are_prec_satisfied
-                elif node_name.startswith(LIFTED_STR):
-                    results[id(current)] = self.extract_from_lifted(node_name, predicates_indexes)
-                elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE):
-                    results[id(current)] = self.state.lookup(lookup_key)
-                else:
-                    results[id(current)] = tf.constant(-1.0)
-            elif isinstance(current, sympy.Number):
-                results[id(current)] = current if self.is_tensor(current) else self.get_constant(current)
-            elif isinstance(current, sympy.Basic):
-                if id(current) in results:
-                    continue  # Skip if already processed
-
-                args = list(current.args)
-                missing_args = [arg for arg in args if id(arg) not in results]
-
-                if missing_args:
-                    stack.append((current, None))  # Re-process after args are computed
-                    stack.extend((arg, current) for arg in missing_args)
-                    continue
-
-                # Compute the result once all arguments are available
-                if isinstance(current, sympy.Add):
-                    results[id(current)] = tf.add_n([results[id(arg)] for arg in args])
-                elif isinstance(current, sympy.Mul):
-                    results[id(current)] = tf.math.reduce_prod([results[id(arg)] for arg in args])
-                elif isinstance(current, sympy.Pow):
-                    base, exp = results[id(args[0])], results[id(args[1])]
-                    results[id(current)] = self.sympy_to_tensor_map.get(type(current))(base, exp)
-                elif tf.not_equal(self.state.lookup(tf.constant(str(current), tf.string)), MISSING_VALUE):
-                    results[id(current)] = self.state.lookup(tf.constant(str(current), tf.string))
-                elif tf.cond(tf.equal(tf.strings.substr(tf.constant(str(current), tf.string), 0, len(LIFTED_STR)), LIFTED_STR), 
-                             lambda: True, lambda: False):
-                    results[id(current)] = self.extract_from_lifted(str(current), predicates_indexes)
-                else:
-                    func = self.sympy_to_tensor_map.get(type(current))
-                    if func:
-                        results[id(current)] = func(*[results[id(arg)] for arg in args])
-                    else:
-                        raise ValueError(f"Unsupported operation: {type(current)}")
+    
+        if isinstance(node, tf.Tensor):
+            value = node
+        elif isinstance(node, sympy.logic.boolalg.BooleanTrue):
+            value = tf.constant(1.0)
+        elif isinstance(node, sympy.logic.boolalg.BooleanFalse):
+            value = tf.constant(-1.0)
+        elif isinstance(node, sympy.Symbol):
+            
+            node_name = node.name
+            lookup_key = tf.constant(node_name, dtype=tf.string)
+            if DEBUG > 4:
+                print("..tensor_convert:", node_name)
+            if node_name == ARE_PREC_SATISF_STR:
+                value = are_prec_satisfied
+            elif node_name.startswith(LIFTED_STR):
+                value=SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes,state)
+            elif tf.not_equal(state.lookup(lookup_key), MISSING_VALUE): 
+                if DEBUG > 5:
+                    print("Node:", node_name, "in state:", state[node_name])
+                value = state.lookup(lookup_key)
             else:
-                raise ValueError(f"Unsupported node type: {type(current)}")
+                value = tf.constant(-1.0)
+        elif isinstance(node, sympy.Number):
+            value = node if SympyToTfConverter.is_tensor(node) else SympyToTfConverter.get_constant(node)
+        elif isinstance(node, sympy.Basic):
+            if isinstance(node, sympy.Add):
+                args = [SympyToTfConverter.tensor_convert(arg, predicates_indexes, state,  are_prec_satisfied) for arg in node.args]
+                value = tf.add_n(args)
+            elif isinstance(node, sympy.Mul):
+                args = [SympyToTfConverter.tensor_convert(arg, predicates_indexes, state, are_prec_satisfied) for arg in node.args]
+                value = tf.math.reduce_prod(args)
+            elif isinstance(node, sympy.Pow):
+                func = SympyToTfConverter.sympy_to_tensor_map.get(type(node))
+                base, exp = [SympyToTfConverter.tensor_convert(arg, predicates_indexes, state, are_prec_satisfied) for arg in node.args]
+                value = func(base, exp)      
+            #elif  tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE):
+            #    if DEBUG > 5:
+            #        tf.print("Node:", node_name, "in state:", self.state[node_name])
+            #    value = self.state.lookup(lookup_key)
+            #elif   tf.equal(tf.strings.substr(lookup_key, 0, len(LIFTED_STR)), LIFTED_STR): #tf.cond( tf.equal(tf.strings.substr(lookup_key, 0, len(LIFTED_STR)), LIFTED_STR), lambda: True, lambda: False): 
+            #    value=self.extract_from_lifted(lookup_key, predicates_indexes)    
+            else:
+                func = SympyToTfConverter.sympy_to_tensor_map.get(type(node))
+                if func:
+                    value = func(*[SympyToTfConverter.tensor_convert(arg,predicates_indexes, state,  are_prec_satisfied) for arg in node.args])
+                else:
+                    raise ValueError(f"Unsupported operation: {type(node)}")
+        else:
+            raise ValueError(f"Unsupported node type: {type(node)}")
+        
+        if DEBUG > 5:
+            print(str(node), ":=", value)
+        
+        return value
 
-        return results[id(node)]
+    #@tf.function #(jit_compile=True)
+    @tf.function
+    def tensor_convert_it(node, predicates_indexes, are_prec_satisfied,  state):
+        """
+        Iteratively convert a SymPy node into a TensorFlow operation, allowing manual selection of GPU or CPU execution.
+        
+        DEVICE (str): Device to execute on, e.g., '/GPU:0' or '/CPU:0'.
+        Args:
+            node (sympy.Basic): A SymPy expression node to convert.
+        
+        Returns:
+            TensorFlow Tensor: The resulting tensor.
+        """
+        with tf.device(DEVICE):
+            #node = sympy.sympify(node_str)
+            stack = [(node, None)]  # Stack to store nodes and their computed values
+            results = {}
+            missing_value = tf.constant(-1.0)
+            true_value = tf.constant(1.0)
+            false_value = tf.constant(-1.0)
+            
+            while stack:
+                current, parent = stack.pop()
+                
+                if isinstance(current, tf.Tensor):
+                    results[current] = current
+                elif isinstance(current, sympy.logic.boolalg.BooleanTrue):
+                    results[current] = true_value
+                elif isinstance(current, sympy.logic.boolalg.BooleanFalse):
+                    results[current] = false_value
+                elif isinstance(current, sympy.Symbol):
+                    node_name = current.name
+                    lookup_key = tf.constant(node_name, dtype=tf.string)
+                    
+                    if node_name == ARE_PREC_SATISF_STR:
+                        results[current] = are_prec_satisfied
+                    elif node_name.startswith(LIFTED_STR):
+                        results[current] = SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes, state)
+                    else:
+                        results[current] = tf.cond(
+                            tf.not_equal(state.lookup(lookup_key), missing_value),
+                            lambda: state.lookup(lookup_key),
+                            lambda: missing_value
+                        )
+                elif isinstance(current, sympy.Number):
+                    results[current] = (current if SympyToTfConverter.is_tensor(current) 
+                                        else SympyToTfConverter.get_constant(current))
+                elif isinstance(current, sympy.Basic):
+                    
+                    if current in results:  # Skip if already computed
+                        continue
+                    
+                    args = current.args
+                    
+                    if all(arg in results for arg in args):
+                        if isinstance(current, sympy.Add):
+                            results[current] = tf.add_n([results[arg] for arg in args])
+                        elif isinstance(current, sympy.Mul):
+                            results[current] = tf.math.reduce_prod([results[arg] for arg in args])
+                        elif isinstance(current, sympy.Pow):
+                            func = SympyToTfConverter.sympy_to_tensor_map.get(type(current))
+                            results[current] = func(results[args[0]], results[args[1]])
+                        else:
+                            func = SympyToTfConverter.sympy_to_tensor_map.get(type(current))
+                            if func:
+                                results[current] = func(*[results[arg] for arg in args])
+                            else:
+                                raise ValueError(f"Unsupported operation: {type(current)}")
+                    else:
+                        stack.append((current, parent))  # Re-add current node to process after children
+                        for arg in args:
+                            if arg not in results:
+                                stack.append((arg, current))
+                else:
+                    raise ValueError(f"Unsupported node type: {type(current)}")
+            
+            return results[node]
 
     #@tf.function
     def _tensor_convert(self, node, predicates_indexes, are_prec_satisfied=tf.constant(1.0)):
@@ -388,7 +412,7 @@ class SympyToTensorConverter(ABC):
             if node_name == ARE_PREC_SATISF_STR:
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
-                value=self.extract_from_lifted(lookup_key, predicates_indexes)
+                value=self._extract_from_lifted(lookup_key, predicates_indexes)
             elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
                     print("Node:", node_name, "in state:", self.state[node_name])
@@ -396,7 +420,7 @@ class SympyToTensorConverter(ABC):
             else:
                 value = tf.constant(-1.0)
         elif isinstance(node, sympy.Number):
-            value = node if self.is_tensor(node) else self.get_constant(node)
+            value = node if self._is_tensor(node) else self._get_constant(node)
         elif isinstance(node, sympy.Basic):
             if isinstance(node, sympy.Add):
                 args = [self._tensor_convert(arg, predicates_indexes,  are_prec_satisfied) for arg in node.args]
@@ -427,9 +451,8 @@ class SympyToTensorConverter(ABC):
             print(str(node), ":=", value)
         
         return value
-
     
-    def extract_from_lifted(self, node_name: tf.Tensor, predicates_indexes: tf.Tensor):
+    def _extract_from_lifted(self, node_name: tf.Tensor, predicates_indexes: tf.Tensor):
         pos_str = tf.strings.regex_replace(node_name, LIFTED_STR, "")
         pos = tf.strings.to_number(pos_str, out_type=tf.int32)  # Convert to integer
         indx = predicates_indexes[pos] #tf.gather(predicates_indexes, pos)  # Tensor-safe indexing
@@ -441,12 +464,17 @@ class SympyToTensorConverter(ABC):
         return self.state.lookup(name)
 
 
-    def extract_from_lifted_old(self, node_name, predicates_indexes):
-        pos_str = node_name.replace(LIFTED_STR, "")
-        pos=int(pos_str)
-        indx= predicates_indexes[pos]
-        name=GlobalData.get_key_from_indx_predicates_list(indx)
-        return self.state.lookup(name)
+    def extract_from_lifted(node_name: tf.Tensor, predicates_indexes: tf.Tensor, state): #XXX This or previous one
+        pos_str = tf.strings.regex_replace(node_name, LIFTED_STR, "")
+        pos = tf.strings.to_number(pos_str, out_type=tf.int32)  # Convert to integer
+        indx = predicates_indexes[pos] #tf.gather(predicates_indexes, pos)  # Tensor-safe indexing
+        name = GlobalData.get_key_from_indx_predicates_list(indx)
+        if DEBUG > 4:
+            print("Fluent: ", name," val: ", self.state.lookup(name))
+        if DEBUG > 6:          
+            printf(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
+        return state.lookup(name)
+
 
 
     @abstractmethod
@@ -459,6 +487,7 @@ class SympyToTensorConverter(ABC):
     @abstractmethod
     def is_tensor(self, node):
         raise NotImplementedError("Subclasses should implement this method")
+    
 
 class SympyToTfConverter(SympyToTensorConverter):
     def __init__(self, state: up.model.State):
@@ -472,7 +501,16 @@ class SympyToTfConverter(SympyToTensorConverter):
             sp.Min: tf.minimum,  # ReLU equivalent for Max
             sp.Pow: tf.pow,      # Add the pow function mapping
         }
-
+        
+    sympy_to_tensor_map = { #XXX only this or previous
+            sp.sin: tf.sin,
+            sp.cos: tf.cos,
+            sp.exp: tf.exp,
+            sp.log: tf.math.log,
+            sp.Max: tf.maximum,  # ReLU equivalent for Max
+            sp.Min: tf.minimum,  # ReLU equivalent for Max
+            sp.Pow: tf.pow,      # Add the pow function mapping
+        }
     def negativeRelu(self, x):
         """
         Applies the negative ReLU activation function to the input tensor.
@@ -491,11 +529,19 @@ class SympyToTfConverter(SympyToTensorConverter):
         """
         return (-1.0)*tf.keras.activations.relu(-x)
     
-    def get_constant(self, node): 
+    def _get_constant(self, node): 
         #tf.print("Node: ", node)
         return float(node)
         #return tf.constant(float(node), dtype=tf.float32)
     
-    def is_tensor(self, node):
+    def _is_tensor(self, node):
         return node is tf.Tensor
     
+    
+    def get_constant( node): 
+        #tf.print("Node: ", node)
+        return float(node)
+        #return tf.constant(float(node), dtype=tf.float32)
+    
+    def is_tensor( node):
+        return node is tf.Tensor
