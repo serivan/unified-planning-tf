@@ -11,7 +11,8 @@ from unified_planning.tensor.constants import *
 from unified_planning.model import OperatorKind
 from unified_planning.model import EffectKind
 
-from tensorflow.lookup.experimental import MutableHashTable
+#from tensorflow.lookup.experimental import MutableHashTable
+from tensorflow.lookup.experimental import DenseHashTable
 
 
 
@@ -31,33 +32,70 @@ class TensorState(ABC):
         self.action=None
         self._restore_keys=None
         # Populate the initial state (delegated to a subclass, if necessary)
+
+        self._problem_metric=self.problem.quality_metrics[0]
+        self.str_metric_expr=str(self._problem_metric.expression)
+        self.tf_metric_expr=tf.constant(str(self._problem_metric.expression), tf.string)
+
         if initialize==True:
             self._initialize_state()   
 
-        
-        # Create a MutableHashTable
-        default_value = MISSING_VALUE  # Default value if a key is not found
-        self._hash_state = MutableHashTable(
-            key_dtype=tf.string, 
-            value_dtype=tf.float32, 
-            default_value=default_value
-        )
-        self._initial_hash_state = MutableHashTable(
-            key_dtype=tf.string, 
-            value_dtype=tf.float32, 
-            default_value=default_value
-        )
+
+    def insert_zero(self, keys):
+
+        pos=len(self._state)
+        for k in keys:
+            if str(k) in self._state:
+                continue
+
+            fluent=self._create_fluent(k, 0.0, False)
+            self._state[str(k)] = fluent
+            pos+=1
+
+        #update lists
+        self.compute_keys_positions()
+
+    def set_value(self, pos, value):
+        self.values_tensor[pos].assign(value)
+    
+    def compute_keys_positions(self):
         curr_state=self.get_tensors()
-        # Convert dictionary keys and values to TensorFlow tensors
-        keys_tensor = tf.constant(list(curr_state.keys()), dtype=tf.string)
-        values_tensor =tf.Variable(list(curr_state.values()), dtype=tf.float32) 
+        self.keys_tensor = tf.constant(list(curr_state.keys()), dtype=tf.string)
+        self.values_tensor =tf.Variable(list(curr_state.values()), dtype=tf.float32) 
+        self.initial_values_tensor = tf.Variable(self.values_tensor)
+        GlobalData._class_values_tensor=self.values_tensor
+        pos=0
+        self._keys_positions={}
+        for k in curr_state.keys():
+            self._keys_positions[str(k)]=pos
+            pos+=1
+        self.pos_metric_expr=self.get_key_position(self.str_metric_expr)
+        self.pos_are_prec_sat=self.get_key_position(ARE_PREC_SATISF_STR)
 
-        # Insert data into the hash table
-        self._hash_state.insert(keys_tensor, values_tensor)
-        # Insert data into the curr_hash table
-        self._initial_hash_state.insert(keys_tensor, values_tensor)
+    def get_value(self, key):
+        pos=self.get_key_position(key)
+        if pos==MISSING_VALUE:
+            return TF_ZERO
+        else:
+            return self.values_tensor[pos]
+        
+    def get_key_position(self, key):
+        return self._keys_positions.get(key, MISSING_VALUE)
 
- 
+    def get_key(self, pos):
+        #if pos >=0 and pos< len(self.keys_tensor):
+            return self.keys_tensor[int(pos)]
+        #else:
+        #    return MISSING_VALUE
+        
+    def get_initial_state_values(self):
+
+        self.values_tensor.assign(self.initial_values_tensor)
+        return self.values_tensor
+    
+    def get_state_values(self):
+        return self.values_tensor
+
     def _initialize_state(self):
         """
         Internal method to initialize the state based on the problem's initial values.
@@ -77,31 +115,17 @@ class TensorState(ABC):
             else:
                 self._non_trainable_fluents.append(fluent.get_name())
         
+        # Check for metric_expression
+        if self._state.get(self.str_metric_expr, None) is None:
+            self._state[self.str_metric_expr] = self._create_fluent(self.str_metric_expr, 0.0, False)
+            self._non_trainable_fluents.append(self.str_metric_expr)
+        
         #Add the are_preconditions_satisfied fluent
-        #self._non_trainable_fluents.append(ARE_PREC_SATISF_STR)
-        
-    def restore_hash_state(self, restore_keys=None): 
-        if restore_keys is None:
-            if self._restore_keys is None:
-                restore_keys = self._initial_hash_state.export()[0]
-            else:
-                restore_keys = self._restore_keys  
-        else:
-            self._restore_keys = restore_keys
-        #            restore_keys = self._initial_hash_state.export()[0]
-        #            restore_values = self._initial_hash_state.export()[1]
-         
-        resore_values=self._initial_hash_state.lookup(restore_keys)
-        self._hash_state.insert(restore_keys, resore_values)
-    
-    def get_hash_state(self):
-        """
-        Returns the current state.
-
-        :return: Dictionary of fluent names and their corresponding values.
-        """
-        return self._hash_state
-        
+        self._state[ARE_PREC_SATISF_STR] = self._create_fluent(ARE_PREC_SATISF_STR, -1.0, False)
+        self._non_trainable_fluents.append(ARE_PREC_SATISF_STR)
+        #update lists
+        self.compute_keys_positions()
+                
     
     def get_state(self):
         """
@@ -112,23 +136,6 @@ class TensorState(ABC):
         return self._state
 
  
-    
-    def get_hash_state(self):
-        """
-        Returns the current state.
-
-        :return: Dictionary of fluent names and their corresponding values.
-        """
-        return self._hash_state
-    
-    def get_initial_hash_state(self):
-        """
-        Returns the current state.
-
-        :return: Dictionary of fluent names and their corresponding values.
-        """
-        return self._initial_hash_state
-
     def __ref__(self):
         """
         Prints the current state for debugging purposes.
@@ -304,7 +311,7 @@ class TensorState(ABC):
 
     @staticmethod
     def print_filtered_dict_state(state, excluded_list=None):
-        for key, value in state.items():
+        for key, value in state._state.items():
             if  value!=0 and not any(excluded in key for excluded in excluded_list) :
                 if value is tf.Tensor:
                     print_val= value.numpy()
@@ -312,72 +319,6 @@ class TensorState(ABC):
                     print_val=value
                 
                 print(key,": ", value, end=" -- ")
-
-    @staticmethod
-    def print_filtered_hash_state(state, excluded_list=None):
-
-        keys, values = state.export()  # Get all keys and values
-        
-        for key, value in zip(keys, values):
-            if  value!=0 and not any(excluded in str(key) for excluded in excluded_list) :
-                if value is tf.Tensor:
-                    print_val= value.numpy()
-                else:
-                    print_val=value
-                
-                print(str(key.numpy()),": ", float(print_val), end=" -- ")
-
-
-    def print_mutable_hash_table(hash_table):
-        """
-        Print the contents of a MutableHashTable.
-
-        Args:
-            hash_table: The MutableHashTable to print.
-        """
-        keys = hash_table.export()[0]
-        values = hash_table.export()[1]
-
-        keys_values = tf.stack([keys, values], axis=1)
-        tf.print("MutableHashTable contents:\n", keys_values)
-
-    @staticmethod
-    def shallow_copy_hash_state(hash_state):
-        """Creates a shallow copy of a tf.lookup.MutableHashTable.
-    
-            Args:
-                hash_table (tf.lookup.MutableHashTable): The hash table to copy.
-        
-            Returns:
-                tf.lookup.MutableHashTable: A new hash table with the same key-value pairs.
-        """
-        # Get all keys from the existing hash table
-        keys_tensor = hash_state.export()[0]
-    
-        # Lookup values for the extracted keys
-        values_tensor = hash_state.lookup(keys_tensor)
-    
-        # Create a new hash table with the same default value
-        default_value = MISSING_VALUE  # Default value if a key is not found
-        new_hash_state =  MutableHashTable(
-            key_dtype=hash_state.key_dtype, 
-            value_dtype=hash_state.value_dtype, 
-            default_value=default_value
-        )
-    
-       # Insert the copied keys and values into the new table
-        new_hash_state.insert(keys_tensor, values_tensor)
-    
-        return new_hash_state
-    
-    @staticmethod
-    def print_hash_state(hash_table: MutableHashTable) -> None:
-        """Retrieve and print all key-value pairs."""
-
-        keys, values = self._hash_table.export()  # Get all keys and values
-        
-        for key, value in zip(keys.numpy(), values.numpy()):
-            print(f"{key.decode()}: {value} -- ", end="")
 
 class TfState(TensorState): #, tf.experimental.ExtensionType):
     def __init__(self, problem, intialize=True):

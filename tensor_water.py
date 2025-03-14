@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
-
 """We are now ready to use the Unified-Planning library!
 
 but first import libraries for pytorch
@@ -10,10 +8,21 @@ but first import libraries for pytorch
 
 # Commented out IPython magic to ensure Python compatibility.
 ## Standard libraries
-import os
+import os, shutil
 import math
 import numpy as np
 import time
+
+os.environ["TF_AUTOGRAPH_CACHE_DIR"] = "/mnt/ramdisk/tensorflow"
+os.makedirs(os.environ["TF_AUTOGRAPH_CACHE_DIR"] , exist_ok=True)
+
+import os
+
+# Set the TMPDIR environment variable to your ramdisk directory
+os.environ["TMPDIR"] = "/mnt/ramdisk/tensorflow"
+
+# Ensure the directory exists
+os.makedirs("/mnt/ramdisk/tf_temp", exist_ok=True)
 
 # Commented out IPython magic to ensure Python compatibility.
 import tensorflow as tf
@@ -26,8 +35,6 @@ from tensorboard import program
 import traceback
 import contextlib
 
-# Clear any logs from previous runs
-import os, shutil
 
 
 import sympy as sp
@@ -35,6 +42,11 @@ import sympy as sp
 import datetime
 import pickle
 import random
+#import psutil
+import tracemalloc
+
+tracemalloc.start()
+
 
 """
 
@@ -62,8 +74,11 @@ from unified_planning.io import PDDLWriter, PDDLReader
 from unified_planning.tensor.constants import *
 
 from tensorflow.python.eager import profiler
-tf.config.optimizer.set_experimental_options({"autotune": True})
 """UTILS"""
+
+#tf.config.optimizer.set_experimental_options({"autotune": True})
+#tf.config.run_functions_eagerly(True)
+
 
 # create the new directory for the pickle files
 new_folder = os.path.join(os.getcwd(), 'pickle_files/')
@@ -73,7 +88,13 @@ os.makedirs(new_folder, exist_ok=True)
 #with open(os.path.join(new_folder,'pddl_problem_2001.pkl'), 'rb') as file:
 #  w_problem = pickle.load(file)
 
-
+def get_memory():
+  current, peak = tracemalloc.get_traced_memory()
+  print(f"Memoria attuale: {current / 1024**3:.6f} GB")
+  print(f"Memoria massima usata: {peak / 1024**3:.6f} GB")
+  load_avg = os.getloadavg()  # Restituisce il carico medio su 1, 5 e 15 minuti
+  print(f"Load Average (1, 5, 15 min): {load_avg}")
+   
 reader = PDDLReader()
 
 #SOL_FILE="plan.sol"
@@ -99,20 +120,33 @@ if(DEBUG>=0):
 start_time = time.time()
 tensor_state=TfState(w_problem)
 
+GlobalData._class_tensor_state=tensor_state
 
 #TensorState.print_filtered_dict_state(tensor_state.get_tensors(),["next"])
 #exit()
 #print("Tensor state: ",tensor_state)
 end_time = time.time()
 print("State creation:", end_time - start_time, "seconds")
+get_memory()
 print()
 os.sync()
 
-@tf.function  #(reduce_retracing=True) #(jit_compile=True)
-def execute(plan, initial_state):
-  result= plan.forward(initial_state)
-  #state=plan.get_final_state()
-  #tf.print("E. Objective function: ", state["objective"] )
+def change_initial_state(plan, initial_state):
+
+  state_values=plan.tensor_state.get_initial_state_values()
+  for fluent, value in initial_state.items():
+        #print("Fluent:", fluent)
+        #print("Initial value:", value)
+
+        pos=plan.tensor_state.get_key_position(fluent)
+        if pos>=0:
+            state_values[pos].assign(value)
+  
+  return state_values
+
+@tf.function #(reduce_retracing=True) #(experimental_relax_shapes=True)  # #(jit_compile=True)
+def execute(plan, initial_state_values):
+  result= plan.forward(initial_state_values)
   return result
 
 initial_state={}
@@ -121,8 +155,7 @@ start_time = time.time()
 seq_plan=TfPlan(w_problem, tensor_state, sol_plan)
 end_time = time.time()
 print("Creation time of act_sequence:", end_time - start_time, "seconds")
-#state=seq_plan.get_final_state()
-#print("Creation Objective function: ", state["objective"] )
+get_memory()
 os.sync()
 #DEBUG=6
 print()
@@ -135,31 +168,22 @@ result= 0
 #result= seq_plan.preprocess_apply(initial_state)
 end_time = time.time()
 print("Preprocess:", end_time - start_time, "seconds, result: ", result)
-#state=seq_plan.get_final_state()
-#print("Objective function: ", state["objective"] )
+get_memory()
 
 
-initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+
+
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
-result= seq_plan.forward(initial_state)
+result= seq_plan.forward(initial_state_values)
 #result= 0
 end_time = time.time()
 print("Forward1A:", end_time - start_time, "seconds, result: ", result)
-state=seq_plan.get_final_state()
-print("Objective function: ", state["objective"] )
+get_memory()
+
 os.sync()
 #exit()
-
-initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
-print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
-start_time = time.time()
-result= seq_plan.forward(initial_state)
-#result= 0
-end_time = time.time()
-print("Forward1B:", end_time - start_time, "seconds, result: ", result)
-state=seq_plan.get_final_state()
-print("Objective function: ", state["objective"] )
 
 os.sync()
 #exit()
@@ -171,28 +195,47 @@ tf.print("TF START")
 initial_state={}
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3800.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
+result= seq_plan.forward(initial_state_values)
+#result= 0
+end_time = time.time()
+print("Forward1B:", end_time - start_time, "seconds, result: ", result)
+get_memory()
 
 #
+
+initial_state={}
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(380.0)
+print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+initial_state_values=change_initial_state(seq_plan, initial_state)
+start_time = time.time()
+result= seq_plan.forward(initial_state_values)
+#result= 0
+end_time = time.time()
+print("Forward1C:", end_time - start_time, "seconds, result: ", result)
+get_memory()
+
 # Start profiling
 
 # Start TensorFlow Profiler
-TBOARD=False
+TBOARD= True #False
 use_callgraph = False
 use_cProfile = False
 
 
-#result= execute(seq_plan, initial_state)
+initial_state_values=change_initial_state(seq_plan, initial_state)
+result= execute(seq_plan, initial_state_values)
 
+initial_state_values=change_initial_state(seq_plan, initial_state)
 if TBOARD:
   logdir = "/tmp/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
   tf.profiler.experimental.start(logdir)
   print("TBoard Logdir: ", logdir)
   with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
-      result= execute(seq_plan, initial_state)
+      result= execute(seq_plan, initial_state_values)
   #
   tf.profiler.experimental.stop()
-
 elif use_callgraph:
   #Profiling
   # Generate call graph
@@ -206,39 +249,43 @@ elif use_callgraph:
   from pycallgraph import PyCallGraph
   from pycallgraph.output import GraphvizOutput
   with PyCallGraph(output=graphviz):
-    result= execute(seq_plan, initial_state)
+
+    result= execute(seq_plan, initial_state_values)
 
 elif use_cProfile:
   import cProfile
-  cProfile.run('result= execute(seq_plan, initial_state)')
+  cProfile.run('result= execute(seq_plan, initial_state_values)')
 
 else:
-  result= execute(seq_plan, initial_state)
+  result= execute(seq_plan, initial_state_values)
 
 end_time = time.time()
 print("Forward2:", end_time - start_time, "seconds, result: ", result)
 print()
-
+#exit()
 
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
-result= execute(seq_plan, initial_state)
+result= execute(seq_plan, initial_state_values)
 end_time = time.time()
 print("Forward3:", end_time - start_time, "seconds, result: ", result)
-print()
+get_memory()
+print("\n====================================")
 times=[]
 for i in range(0,100):
   val=random.randint(0,1500)
   initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(val, dtype=tf.float32)
   print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
+  initial_state_values=change_initial_state(seq_plan, initial_state)
+  
   start_time = time.time()
-  result= execute(seq_plan, initial_state)
+  result= execute(seq_plan, initial_state_values)
   end_time = time.time()
   delta=end_time - start_time
   print("Forward-"+str(i)+": ", end_time - start_time, "seconds, result: ", result)
-  #state=seq_plan.get_final_state()
-  #print("Objective function: ", state["objective"] )
+  get_memory()
   times.append(delta)
   print()
 

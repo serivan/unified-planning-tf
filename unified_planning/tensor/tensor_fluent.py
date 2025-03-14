@@ -148,7 +148,7 @@ class TfFluent(TensorFluent):
         if isinstance(value_node, tf.Tensor):
             self._fluent_value = value_node
         else:
-            if isinstance(value_node,int):
+            if isinstance(value_node,int) or isinstance(value_node,float):
                 value=value_node
             else:
                 value=value_node.constant_value()

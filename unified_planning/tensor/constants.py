@@ -2,7 +2,8 @@ import tensorflow as tf
 import functools
 import inspect
 
-from tensorflow.lookup.experimental import MutableHashTable
+#from tensorflow.lookup.experimental import MutableHashTable
+from tensorflow.lookup.experimental import DenseHashTable
 
 # Activate debug mode
 DEBUG = 0
@@ -23,6 +24,11 @@ TF_UN_SAT=tf.constant(-1.0, dtype=tf.float32)
 NUM_ZERO=TF_ZERO.numpy() 
 NUM_SAT=TF_SAT.numpy()
 NUM_UN_SAT=TF_UN_SAT.numpy()
+
+# Define unique keys for empty and deleted buckets
+EMPTY_KEY = "__EMPTY__"
+DELETED_KEY = "__DELETED__"
+
 
 UNSAT_PENALTY=tf.constant(50000.0, dtype=tf.float32)
 def grep( string, pattern):
@@ -46,18 +52,20 @@ class GlobalData():
     """
     Class to store global data.
     """
-  
-    _class_lifted_actions_object_map={} # Map to store the up action and the corresponding lifted object 
+    _class_grounded_actions_map={} # Map to store the up action and the corresponding lifted object 
 
-    _class_lifted_actions_id_map={} # Map to store the up action and the corresponding ID
+    #_class_lifted_actions_object_map={} # Map to store the up action and the corresponding lifted object 
 
-    _class_predicates_list_string=_class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
+    _class_liftedData_map={} # Map to store the up action and the corresponding ID
+    _class_liftedData_list=[] # List to store the up action and the corresponding Data
+    
+    _class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
     tf_class_predicates_list= None
-    _class_predicates_map=MutableHashTable(key_dtype=tf.string, value_dtype=tf.int64, default_value=MISSING_VALUE) # Map to store the predicates
-   
+    _class_predicates_map=DenseHashTable(key_dtype=tf.string, value_dtype=tf.int64, default_value=MISSING_VALUE, empty_key=EMPTY_KEY,deleted_key=DELETED_KEY) # Map to store the predicates
+
     _class_conditions_list=[]  # List to store the preconditions
     _class_conditions_map={} # Map to store the preconditions
-
+ 
     _class_effects_list=[]  # List to store the effects
     _class_effects_map={} # position of the effect in _effects_list
 
@@ -171,10 +179,13 @@ class GlobalData():
 
 
      
-    def get_lifted_string(prec_str:str, predicates_set, lifted_str:str=LIFTED_STR):
+    def get_lifted_string(prec_str:str, predicates_list, lifted_str:str=LIFTED_STR):
         ''' Replace the predicates in the string with the lifted string+index'''
-        for indx, pred in enumerate(predicates_set):
-            prec_str=prec_str.replace(str(pred), lifted_str+str(indx))
+        str_predicates_list=[(pos,str(pred)) for pos,pred in enumerate(predicates_list)]
+        str_predicates_list=sorted(str_predicates_list, key=lambda x: len(x[1]), reverse=True) #Avoid substring substitution
+     
+        for indx,pred in str_predicates_list:
+            prec_str=prec_str.replace(pred, lifted_str+str(indx))
         return prec_str
    
 
