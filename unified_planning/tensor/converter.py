@@ -30,7 +30,7 @@ class SympyToTensorConverter(ABC):
         SympyToTensorConverter._class_current_state=state
     
 
-    def convert(self, sympy_expr,predicates_indexes, are_prec_satisfied=0.0):
+    def convert(self, sympy_expr,predicates_indexes, are_prec_satisfied, state_values):
         """
         Convert a SymPy expression to a TensorFlow tensor by recursively evaluating it.
 
@@ -44,7 +44,7 @@ class SympyToTensorConverter(ABC):
         if(DEBUG>4):
             print("..convert")
         #result= self._tensor_convert(sympy_expr,predicates_indexes, are_prec_satisfied)
-        result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, self.tensor_state.get_state_values(), are_prec_satisfied)
+        result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, state_values, are_prec_satisfied)
         if(DEBUG>4):
             print("Converter Result:", result)
         return result
@@ -356,7 +356,7 @@ class SympyToTensorConverter(ABC):
             if node_name == ARE_PREC_SATISF_STR:
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
-                value=SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes)
+                value=SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes,state)
             elif tf.not_equal(state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
                     print("Node:", node_name, "in state:", state[node_name])
@@ -437,7 +437,7 @@ class SympyToTensorConverter(ABC):
                     if node_name == ARE_PREC_SATISF_STR:
                         results[current] = are_prec_satisfied
                     elif node_name.startswith(LIFTED_STR):
-                        results[current] = SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes)
+                        results[current] = SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes,state_values)
                     else:
                         results[current] = tf.cond(
                             tf.not_equal(state.lookup(lookup_key), missing_value),
@@ -505,7 +505,7 @@ class SympyToTensorConverter(ABC):
             if node_name == ARE_PREC_SATISF_STR:
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
-                value=self._extract_from_lifted(lookup_key, predicates_indexes)
+                value=self._extract_from_lifted(lookup_key, predicates_indexes, state_values)
             elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
                     print("Node:", node_name, "in state:", self.state[node_name])
@@ -559,18 +559,18 @@ class SympyToTensorConverter(ABC):
         return self.state.lookup(name)
 
 
-    def extract_from_lifted(node_name: tf.Tensor, predicates_indexes: tf.Tensor): #XXX This or previous one
+    def extract_from_lifted(node_name: tf.Tensor, predicates_indexes: tf.Tensor,  state_values): #XXX This or previous one
         pos_str = tf.strings.regex_replace(node_name, LIFTED_STR, "")
         pos = tf.strings.to_number(pos_str, out_type=tf.int32)  # Convert to integer
         indx = predicates_indexes[pos] #tf.gather(predicates_indexes, pos)  # Tensor-safe indexing
-        name = GlobalData.get_key_from_indx_predicates_list(indx)
-        state=SympyToTfConverter.get_curr_state()
-
+        #name = GlobalData.get_key_from_indx_predicates_list(indx)
+        #state=SympyToTfConverter.get_curr_state()
+        value=state_values[indx]
         if DEBUG > 4:
-            print("Fluent: ", node_name," val: ", state.lookup(name))
+            print("Fluent: ", node_name," val: ", value)
         if DEBUG > 6:          
             print(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
-        return state.lookup(name)
+        return value
 
 
 

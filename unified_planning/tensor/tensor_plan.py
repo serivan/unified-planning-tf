@@ -9,7 +9,7 @@ from unified_planning.model import EffectKind
 from unified_planning.engines.compilers import Grounder, GrounderHelper
 from unified_planning.tensor.converter import SympyToTfConverter
 from unified_planning.tensor.tensor_state import TensorState
-from unified_planning.tensor.tensor_action import TensorAction
+from unified_planning.tensor.tensor_action import TensorAction, TfLiftedAction, TfAction
 
 from unified_planning.tensor.constants import *
 
@@ -26,6 +26,8 @@ class TensorPlan(ABC):
         """
         self.plan = plan
         self.tensor_state = tensor_state
+        GlobalData.tensor_state=tensor_state
+
         self.state_values = None
         
         self.actions_sequence = {}  # Dictionary to store executed actions
@@ -43,6 +45,7 @@ class TensorPlan(ABC):
         self._problem_metric=self.problem.quality_metrics[0]
         self.str_metric_expr=str(self._problem_metric.expression)
         self.tf_metric_expr=tf.constant(str(self._problem_metric.expression), tf.string)
+        self._applicable_actions_list=None
 
         #self.problem_kind=pk = problem.kind
         #if not Grounder.supports(pk):
@@ -121,45 +124,44 @@ class TensorPlan(ABC):
         :return: The resulting state after all actions have been applied.
         """
         self.state_values=state_values
-
         if DEBUG > 0:
             print(".forward")
+            #tf.print("Metric: ", state_values[self.tensor_state.pos_metric_expr])
             if DEBUG>5:
                 print("Initial state: ", state_values)
         step=0
+        self._applicable_actions_list=[]
         for tensor_action in self.actions_sequence.values():    
             
             # Apply the action to the current state
             if DEBUG>2:
                 print("\nApply Action in ", step, " name: ", tensor_action.get_name())
+                #tf.print("Step: ", step, " storage: ", state_values[1222])
         
-            are_preconditions_satisfied,state_update=tensor_action.apply_action(state_values) 
+            #are_preconditions_satisfied,state_update=tensor_action.apply_action(state_values)
+            are_preconditions_satisfied=TfLiftedAction.apply_lifted_action(tensor_action.get_lifted_action_indx(), tensor_action.get_predicates_indexes() ,state_values) 
+            self._applicable_actions_list.append((step, are_preconditions_satisfied))
             new_values= state_values
-            if DEBUG >2:
-                print("State update: ", state_update)   
-                for pos,value in state_update:
-                    print("update: ", self.tensor_state.get_key(pos), ": ", value, "orig: ", state_values[pos])
-             
-            for pos,value in state_update:
-                if pos>=0:
-                    orig=state_values[pos]     
-                    #value=value+new_values[pos]              
-                    #new_values[pos].assign(value)
-                    new_values.scatter_nd_add(indices=[[pos]], updates=[value])
-                    if DEBUG>5:
-                        print("Update: ", self.tensor_state.get_key(pos).numpy(), ": ", float(value), "orig: ",orig.numpy(), "new: ", new_values[pos].numpy())
+            
+            #for pos,value in state_update:
+            #    if pos>=0:
+            #        orig=state_values[pos]     
+            #        new_values.scatter_nd_add(indices=[[pos]], updates=[value])
+            #        if DEBUG>5:
+            #            tf.print("Update: ", self.tensor_state.get_key(pos), ": ", float(value), "orig: ",float(orig), "new: ", float(new_values[pos]))
            
-  
-            if are_preconditions_satisfied < 0:
+            metric_value_add = UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(are_preconditions_satisfied)
+            if tf.math.less(are_preconditions_satisfied, TF_ZERO):
                 #print("Action in ", step, " is NOT applicable: ", tensor_action.get_name()) 
                 pos=self.tensor_state.pos_metric_expr
-                metric_value_add = UNSAT_PENALTY + UNSAT_PENALTY * (-1.0) * tanh(are_preconditions_satisfied)
                 
                 if pos>=0:
-                    state_update.append((pos, metric_value_add))
+                    #state_update.append((pos, metric_value_add))
                     new_values.scatter_nd_add(indices=[[pos]], updates=[metric_value_add])
                     #metric_value_add=metric_value_add+new_values[pos]
                     #new_values[pos].assign(metric_value_add)
+                if DEBUG>3:  
+                    tf.print("Action in ", step, " is NOT applicable: ", tensor_action.get_name(), " penalty: ", metric_value_add, "final: ", new_values[pos], " prec sat: ", are_preconditions_satisfied, " prec sat state: ",new_values[self.tensor_state.pos_are_prec_sat])   
 
             self.new_values = new_values
             state_values = new_values  # Update the reference for the next iteration
@@ -231,14 +233,16 @@ class TensorPlan(ABC):
         metric_value = state_values[self.tensor_state.pos_metric_expr]
         metric_applicable = 0 # len(plan.actions)
         plan_len=len(self.actions_sequence)
-        for step,act in self.actions_sequence.items():
-            if act.is_applicable() == True:
+        for step,prec_sat in self._applicable_actions_list:
+            if prec_sat>=0:
                 metric_applicable += 1
                 if DEBUG > 1:
+                    act=self.actions_sequence[step]
                     tf.print("Action in ", step, " is applicable: ", act.get_name())
             else:
                 valid=0
                 if DEBUG > 0:
+                    act=self.actions_sequence[step]
                     tf.print("Action in ", step, " is NOT applicable: ", act.get_name())
                 
         return {

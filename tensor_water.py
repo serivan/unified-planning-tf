@@ -132,7 +132,6 @@ print()
 os.sync()
 
 def change_initial_state(plan, initial_state):
-
   state_values=plan.tensor_state.get_initial_state_values()
   for fluent, value in initial_state.items():
         #print("Fluent:", fluent)
@@ -141,11 +140,19 @@ def change_initial_state(plan, initial_state):
         pos=plan.tensor_state.get_key_position(fluent)
         if pos>=0:
             state_values[pos].assign(value)
+            tf.print("Fluent: ", fluent, " value: ", state_values[pos])
+
+  
+  storage=plan.tensor_state.get_key_position("storage(hoa_binh_dam)") 
+  #tf.print("Storage pos:", storage, " value: ", state_values[storage])
   
   return state_values
-
+iter= tf.Variable(0, dtype=tf.int32) 
 @tf.function #(reduce_retracing=True) #(experimental_relax_shapes=True)  # #(jit_compile=True)
 def execute(plan, initial_state_values):
+  iter.assign_add(1)
+  if DEBUG>=0:
+    tf.print("Execute iter: ", iter)
   result= plan.forward(initial_state_values)
   return result
 
@@ -161,7 +168,7 @@ os.sync()
 print()
 #exit()
 
-initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 start_time = time.time()
 result= 0
@@ -193,7 +200,7 @@ tf.print("TF START")
 
 
 initial_state={}
-initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3800.0)
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(380.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
@@ -215,6 +222,7 @@ result= seq_plan.forward(initial_state_values)
 end_time = time.time()
 print("Forward1C:", end_time - start_time, "seconds, result: ", result)
 get_memory()
+#exit()
 
 # Start profiling
 
@@ -224,6 +232,9 @@ use_callgraph = False
 use_cProfile = False
 
 
+
+initial_state={}
+initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
 initial_state_values=change_initial_state(seq_plan, initial_state)
 result= execute(seq_plan, initial_state_values)
 
@@ -236,7 +247,8 @@ if TBOARD:
       result= execute(seq_plan, initial_state_values)
   #
   tf.profiler.experimental.stop()
-elif use_callgraph:
+
+if use_callgraph:
   #Profiling
   # Generate call graph
   graphviz = GraphvizOutput(output_file='callgraph.svg')  # Vector format
@@ -252,12 +264,9 @@ elif use_callgraph:
 
     result= execute(seq_plan, initial_state_values)
 
-elif use_cProfile:
+if use_cProfile:
   import cProfile
   cProfile.run('result= execute(seq_plan, initial_state_values)')
-
-else:
-  result= execute(seq_plan, initial_state_values)
 
 end_time = time.time()
 print("Forward2:", end_time - start_time, "seconds, result: ", result)

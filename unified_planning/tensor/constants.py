@@ -17,6 +17,9 @@ LIFTED_STR="_LIFT_"
 
 TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu
+TF_INT_ZERO=tf.constant(0, dtype=tf.int32)
+TF_INT_SAT=tf.constant(1, dtype=tf.int32)
+TF_INT_UN_SAT=tf.constant(-1, dtype=tf.int32)
 TF_ZERO=tf.constant(0.0, dtype=tf.float32)
 TF_SAT=tf.constant(1.0, dtype=tf.float32)
 MISSING_VALUE=-1 #tf.constant(-1.0, dtype=tf.float32)
@@ -68,7 +71,7 @@ class GlobalData():
  
     _class_effects_list=[]  # List to store the effects
     _class_effects_map={} # position of the effect in _effects_list
-
+    tensor_state=None
 
 
     def _insert_in_map(keys, table_kv, list_vk, value=None):
