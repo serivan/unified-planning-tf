@@ -35,7 +35,7 @@ class TensorState(ABC):
 
         self._problem_metric=self.problem.quality_metrics[0]
         self.str_metric_expr=str(self._problem_metric.expression)
-        self.tf_metric_expr=tf.constant(str(self._problem_metric.expression), tf.string)
+        self.tf_metric_expr=tf.constant(self.str_metric_expr, tf.string)
 
         if initialize==True:
             self._initialize_state()   
@@ -44,16 +44,23 @@ class TensorState(ABC):
     def insert_zero(self, keys):
 
         pos=len(self._state)
+        count=0
         for k in keys:
-            if str(k) in self._state:
+            k_str=str(k)
+            if k_str in self._state:
                 continue
 
             fluent=self._create_fluent(k, 0.0, False)
-            self._state[str(k)] = fluent
+            self._state[k_str] = fluent
+            if k_str not in self._keys_positions:
+                self._keys_positions[k_str]=pos
+                
             pos+=1
+            count+=1
 
         #update lists
-        self.compute_keys_positions()
+        #if count >0:
+        #    self.compute_keys_positions()
 
     def set_value(self, pos, value):
         self.values_tensor[pos].assign(value)
@@ -71,6 +78,9 @@ class TensorState(ABC):
             pos+=1
         self.pos_metric_expr=self.get_key_position(self.str_metric_expr)
         self.pos_are_prec_sat=self.get_key_position(ARE_PREC_SATISF_STR)
+        GlobalData.pos_metric_expr=tf.constant(self.pos_metric_expr)
+        GlobalData.pos_are_prec_sat=tf.constant(self.pos_are_prec_sat)
+        
 
     def get_value(self, key):
         pos=self.get_key_position(key)
@@ -104,24 +114,24 @@ class TensorState(ABC):
         for fluent, value in self.problem.initial_values.items():
             #print("Fluent:", fluent)
             #print("Initial value:", value)
-            if fluent.get_name() == "large_container" or fluent.get_name() == "small_container":
+            fluent_name=fluent.get_name()
+            if fluent_name == "large_container" or fluent_name == "small_container":
                 trainable=True
             else:  
                 trainable=False
             if not (fluent.type.is_bool_type() and value.is_true() == False):
-                self._state[fluent.get_name()] = self._create_fluent(fluent, value, trainable) # XXXX check if 
+                self._state[fluent_name] = self._create_fluent(fluent, value, trainable) # XXXX check if 
             if trainable:
-                self._trainable_fluents.append(fluent.get_name())
+                self._trainable_fluents.append(fluent_name)
             else:
-                self._non_trainable_fluents.append(fluent.get_name())
-        
+                self._non_trainable_fluents.append(fluent_name)
         # Check for metric_expression
         if self._state.get(self.str_metric_expr, None) is None:
-            self._state[self.str_metric_expr] = self._create_fluent(self.str_metric_expr, 0.0, False)
+            self._state[self.str_metric_expr] = self._create_fluent(self.str_metric_expr, TF_ZERO, False)
             self._non_trainable_fluents.append(self.str_metric_expr)
         
         #Add the are_preconditions_satisfied fluent
-        self._state[ARE_PREC_SATISF_STR] = self._create_fluent(ARE_PREC_SATISF_STR, -1.0, False)
+        self._state[ARE_PREC_SATISF_STR] = self._create_fluent(ARE_PREC_SATISF_STR, TF_ZERO, False)
         self._non_trainable_fluents.append(ARE_PREC_SATISF_STR)
         #update lists
         self.compute_keys_positions()

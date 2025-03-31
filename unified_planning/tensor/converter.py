@@ -15,7 +15,7 @@ from unified_planning.model import OperatorKind
 from unified_planning.model import EffectKind
 
 from unified_planning.tensor.constants import *
-
+from sympy import Heaviside
 
 
 class SympyToTensorConverter(ABC):
@@ -50,7 +50,7 @@ class SympyToTensorConverter(ABC):
         return result
     
     # Wrap the conversion into a tf.function
-    def create_tensor_function(sympy_expr, predicates_indexes, are_prec_satisfied=tf.constant(1.0)):
+    def create_tensor_function(sympy_expr, predicates_indexes, are_prec_satisfied=TF_SAT):
         #@tf.function
         def tensor_convert_funct(state):
             return SympyToTfConverter.tensor_convert(sympy_expr, predicates_indexes, state, are_prec_satisfied)
@@ -58,13 +58,13 @@ class SympyToTensorConverter(ABC):
 
 
     # Wrap the conversion into a tf.function
-    def sympy_to_tensor_function_conv(sympy_expr, are_prec_satisfied=tf.constant(1.0)):
+    def sympy_to_tensor_function_conv(sympy_expr, are_prec_satisfied=TF_SAT):
         #@tf.function
         def tensor_convert_funct(predicates_indexes, state_values):
             return SympyToTfConverter.tensor_convert(sympy_expr, predicates_indexes, state_values, are_prec_satisfied)
         return tensor_convert_funct
 
-    def sympy_to_tensor_function(sympy_expr, are_prec_satisfied=tf.constant(1.0)):
+    def sympy_to_tensor_function(sympy_expr, are_prec_satisfied=TF_SAT):
         # Convert the string to a Sympy expression.
         #sympy_expr = sympy.sympify(expr)
         
@@ -83,9 +83,10 @@ class SympyToTensorConverter(ABC):
             f_lambdified = lambda : sympy_expr if SympyToTfConverter.is_tensor(sympy_expr) else SympyToTfConverter.get_constant(sympy_expr)
         else:
             f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules="tensorflow")
+            #f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules={"tensorflow": SympyToTfConverter.sympy_to_tensor_map})
             need_lambdify=True
         
-        #@tf.function
+        @tf.function
         def tf_func(indexes,state_values):
             # Ensure that the number of indexes matches the number of free symbols.
             #if len(indexes) < len(free_symbols):
@@ -117,7 +118,7 @@ class SympyToTensorConverter(ABC):
         return tf_func
 
 
-    def convert_new(sympy_expr,predicates_indexes, are_prec_satisfied=0.0):
+    def convert_new(sympy_expr,predicates_indexes, are_prec_satisfied=TF_SAT):
         """
         Convert a SymPy expression to a TensorFlow tensor by recursively evaluating it.
 
@@ -156,31 +157,36 @@ class SympyToTensorConverter(ABC):
     def when_sympy_expr_inserted(self, effect):
         return effect.sympy_expr
 
-    def when_sympy_expr_not_inserted(self, effect, effects_set, are_prec_satisfied):
+    def when_sympy_expr_not_inserted(self, effect, effects_set, cond_position, are_prec_satisfied):
         # Handle different effect kinds
         if  effect.fluent.node_type == OperatorKind.FLUENT_EXP and effect.value.is_bool_constant():
             if effect.value.bool_constant_value():
                 value_str = str(NUM_SAT)
             else:
                 value_str = str(NUM_UN_SAT)
-            value_str = str(NUM_UN_SAT) if are_prec_satisfied < 0.0 else value_str+'-'+str(effect.fluent.get_name())
+            value_str = str(NUM_UN_SAT) if are_prec_satisfied < TF_ZERO else value_str+'-'+str(effect.fluent.get_name())
         elif effect.kind == EffectKind.ASSIGN:
-            value_str = "0.0" if are_prec_satisfied < 0.0 else str(effect.value) + '-' + str(effect.fluent.get_name())
+            value_str = "0.0" if are_prec_satisfied < TF_ZERO else str(effect.value) + '-' + str(effect.fluent.get_name())
 
         elif effect.kind == EffectKind.INCREASE:
-            value_str = "0.0" if are_prec_satisfied < 0.0 else  str(effect.value)
+            value_str = "0.0" if are_prec_satisfied < TF_ZERO else  str(effect.value)
 
         elif effect.kind == EffectKind.DECREASE:
-            value_str = "0.0" if are_prec_satisfied < 0.0 else  '(-1.0*)' + str(effect.value)
+            value_str = "0.0" if are_prec_satisfied < TF_ZERO else  '(-1.0*)' + str(effect.value)
         else:
             raise ValueError("Unsupported effect kind")
 
         lifted_str=GlobalData.get_lifted_string(value_str,effects_set)
         # Convert to sympy expression and insert it
+        if (cond_position>=0):
+            sympy_condition=GlobalData._class_conditions_list[cond_position].sympy_expr
+            #lifted_str="Heaviside("+str(sympy_condition)+") * ("+lifted_str +")"      
+            lifted_str="Max(0.0,sign("+str(sympy_condition)+")) * ("+lifted_str +")"      
         sympy_expr = sympy.sympify(lifted_str)
+        
         return sympy_expr
 
-    def define_effect_value(self, effect, are_prec_satisfied=-1.0):
+    def define_effect_value(self, effect, are_prec_satisfied=TF_UN_SAT):
         ''' Compute the value of the effect
             Args:   effect (Effect): The effect to apply.
             Returns: The value of the effect
@@ -190,13 +196,13 @@ class SympyToTensorConverter(ABC):
         if(DEBUG>6):
             print("..compute_effect_value: ", effect.fluent.get_name())
 
-        sympy_expr_sat = self.when_sympy_expr_not_inserted(effect, 1.0)
+        sympy_expr_sat = self.when_sympy_expr_not_inserted(effect, TF_SAT)
         
-        sympy_expr_unsat = self.when_sympy_expr_not_inserted(effect, -1.0)
+        sympy_expr_unsat = self.when_sympy_expr_not_inserted(effect, TF_UN_SAT)
         
         effect.insert_sympy_expression(sympy_expr_sat, sympy_expr_unsat)
 
-        if ( are_prec_satisfied ==1.0 ):
+        if ( are_prec_satisfied ==TF_SAT ):
             sympy_expr = sympy_expr_sat
         else:   
             sympy_expr = sympy_expr_unsat
@@ -215,7 +221,7 @@ class SympyToTensorConverter(ABC):
         return result
 
 
-    def compute_effect_value(self, effect, are_prec_satisfied=-1.0):
+    def compute_effect_value(self, effect, are_prec_satisfied=TF_UN_SAT):
         ''' Compute the value of the effect
             Args:   effect (Effect): The effect to apply.
             Returns: The value of the effect
@@ -224,7 +230,7 @@ class SympyToTensorConverter(ABC):
         if(DEBUG>6):
             print("..compute_effect_value: ", effect.fluent.get_name())
 
-        if (are_prec_satisfied == 1.0):
+        if (are_prec_satisfied == TF_SAT):
             sympy_expr = effect.sympy_expr_sat
         else:
             sympy_expr = effect.sympy_expr_unsat
@@ -328,7 +334,7 @@ class SympyToTensorConverter(ABC):
 
 
     #@tf.function
-    def tensor_convert(node, predicates_indexes, state, are_prec_satisfied=tf.constant(1.0)):
+    def tensor_convert(node, predicates_indexes, state, are_prec_satisfied=TF_SAT):
         """
         Recursively convert a SymPy node into a TensorFlow operation.
         
@@ -362,7 +368,7 @@ class SympyToTensorConverter(ABC):
                     print("Node:", node_name, "in state:", state[node_name])
                 value = state.lookup(lookup_key)
             else:
-                value = tf.constant(-1.0)
+                value = TF_UN_SAT
         elif isinstance(node, sympy.Number):
             value = node if SympyToTfConverter.is_tensor(node) else SympyToTfConverter.get_constant(node)
         elif isinstance(node, sympy.Basic):
@@ -479,7 +485,7 @@ class SympyToTensorConverter(ABC):
             return results[node]
 
     #@tf.function
-    def _tensor_convert(self, node, predicates_indexes, are_prec_satisfied=tf.constant(1.0)):
+    def _tensor_convert(self, node, predicates_indexes, are_prec_satisfied=TF_SAT):
         """
         Recursively convert a SymPy node into a TensorFlow operation.
         
@@ -597,6 +603,8 @@ class SympyToTfConverter(SympyToTensorConverter):
             sp.Max: tf.maximum,  # ReLU equivalent for Max
             sp.Min: tf.minimum,  # ReLU equivalent for Max
             sp.Pow: tf.pow,      # Add the pow function mapping
+            sp.sign: tf.sign,
+            Heaviside:  tf_differentiable_heaviside,
         }
         
     sympy_to_tensor_map = { #XXX only this or previous
@@ -607,6 +615,8 @@ class SympyToTfConverter(SympyToTensorConverter):
             sp.Max: tf.maximum,  # ReLU equivalent for Max
             sp.Min: tf.minimum,  # ReLU equivalent for Max
             sp.Pow: tf.pow,      # Add the pow function mapping
+            sp.sign: tf.sign,
+            Heaviside:  tf_differentiable_heaviside,
         }
     def negativeRelu(self, x):
         """

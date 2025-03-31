@@ -51,6 +51,18 @@ def grep( string, pattern):
             matching_lines.append(line)
     return "\n".join(matching_lines)
 
+ 
+@tf.custom_gradient
+def tf_differentiable_heaviside(x):
+    """ Heaviside step function with a smooth gradient. """
+    y = tf.where(x >= 0, 1.0, 0.0)  # Standard Heaviside function
+
+    def grad(dy):
+        return dy * tf.exp(-x**2)  # Smooth Gaussian-like derivative
+
+    return y, grad
+   
+
 class GlobalData():
     """
     Class to store global data.
@@ -61,6 +73,10 @@ class GlobalData():
 
     _class_liftedData_map={} # Map to store the up action and the corresponding ID
     _class_liftedData_list=[] # List to store the up action and the corresponding Data
+
+    _class_lifted_effects_pos_list=[]  # List to store the effects, same index of  _class_liftedData_list
+    _class_lifted_effects_funct_list=[]  # List to store the effects, same index of  _class_liftedData_list
+    _class_act_preconditions_function_list=[]  # List to store the preconditions function, same index of  _class_liftedData_list
     
     _class_predicates_list= [] #tf.Variable([], dtype=tf.string, size=0, dynamic_size=True)  # List to store the predicates
     tf_class_predicates_list= None
@@ -71,8 +87,10 @@ class GlobalData():
  
     _class_effects_list=[]  # List to store the effects
     _class_effects_map={} # position of the effect in _effects_list
+    
+    apply_action_fn_list=list() # List to store the apply action lamba functions
     tensor_state=None
-
+    metric_pos=-1
 
     def _insert_in_map(keys, table_kv, list_vk, value=None):
         assigned_values = []  # List to store the incremented values

@@ -37,12 +37,13 @@ class FNode(object):
     be instantiated or modified by the user.
     """
 
-    __slots__ = ["_content", "_node_id", "_env"]
+    __slots__ = ["_content", "_node_id", "_env", "name"]
 
     def __init__(self, content: FNodeContent, node_id: int, environment: Environment):
         self._content = content
         self._node_id = node_id
         self._env = environment
+        self.name=None
         return
 
     # __eq__ is left as default while __hash__ uses the node id. This
@@ -65,68 +66,72 @@ class FNode(object):
         return "".join(p)
 
     def __repr__(self) -> str:
-        if self.is_bool_constant():
-            return "true" if self.is_true() else "false"
+        if self.name is not None:
+            return self.name
+        elif self.is_bool_constant():
+            self.name= "true" if self.is_true() else "false"
         elif self.is_int_constant():
-            return str(self.constant_value())
+            self.name= str(self.constant_value())
         elif self.is_real_constant():
-            return str(self.constant_value())
+            self.name=  str(self.constant_value())
         elif self.is_fluent_exp():
-            return self.fluent().name + self.get_nary_expression_string(", ", self.args)
+            self.name=  self.fluent().name + self.get_nary_expression_string(", ", self.args)
         elif self.is_dot():
-            return f"{self.agent()}.{self.arg(0)}"
+            self.name=  f"{self.agent()}.{self.arg(0)}"
         elif self.is_parameter_exp():
-            return self.parameter().name
+            self.name=  self.parameter().name
         elif self.is_variable_exp():
-            return self.variable().name
+            self.name=  self.variable().name
         elif self.is_object_exp():
-            return self.object().name
+            self.name=  self.object().name
         elif self.is_timing_exp():
-            return str(self.timing())
+            self.name=  str(self.timing())
         elif self.is_and():
-            return self.get_nary_expression_string(" and ", self.args)
+            self.name=  self.get_nary_expression_string(" and ", self.args)
         elif self.is_or():
-            return self.get_nary_expression_string(" or ", self.args)
+            self.name=  self.get_nary_expression_string(" or ", self.args)
         elif self.is_not():
-            return f"(not {str(self.arg(0))})"
+            self.name=  f"(not {str(self.arg(0))})"
         elif self.is_implies():
-            return self.get_nary_expression_string(" implies ", self.args)
+            self.name=  self.get_nary_expression_string(" implies ", self.args)
         elif self.is_iff():
-            return self.get_nary_expression_string(" iff ", self.args)
+            self.name=  self.get_nary_expression_string(" iff ", self.args)
         elif self.is_exists():
             s = ", ".join(str(v) for v in self.variables())
-            return f"Exists ({s}) {str(self.arg(0))}"
+            self.name=  f"Exists ({s}) {str(self.arg(0))}"
         elif self.is_always():
-            return f"Always({str(self.arg(0))})"
+            self.name=  f"Always({str(self.arg(0))})"
         elif self.is_sometime():
-            return f"Sometime({str(self.arg(0))})"
+            self.name=  f"Sometime({str(self.arg(0))})"
         elif self.is_sometime_before():
             s = ", ".join(str(v) for v in self.args)
-            return f"Sometime-Before({str(s)})"
+            self.name=  f"Sometime-Before({str(s)})"
         elif self.is_sometime_after():
             s = ", ".join(str(v) for v in self.args)
-            return f"Sometime-After({str(s)})"
+            self.name=  f"Sometime-After({str(s)})"
         elif self.is_at_most_once():
-            return f"At-Most-Once({str(self.arg(0))})"
+            self.name=  f"At-Most-Once({str(self.arg(0))})"
         elif self.is_forall():
             s = ", ".join(str(v) for v in self.variables())
-            return f"Forall ({s}) {str(self.arg(0))}"
+            self.name=  f"Forall ({s}) {str(self.arg(0))}"
         elif self.is_plus():
-            return self.get_nary_expression_string(" + ", self.args)
+            self.name=  self.get_nary_expression_string(" + ", self.args)
         elif self.is_minus():
-            return self.get_nary_expression_string(" - ", self.args)
+            self.name=  self.get_nary_expression_string(" - ", self.args)
         elif self.is_times():
-            return self.get_nary_expression_string(" * ", self.args)
+            self.name=  self.get_nary_expression_string(" * ", self.args)
         elif self.is_div():
-            return self.get_nary_expression_string(" / ", self.args)
+            self.name=  self.get_nary_expression_string(" / ", self.args)
         elif self.is_le():
-            return self.get_nary_expression_string(" <= ", self.args)
+            self.name=  self.get_nary_expression_string(" <= ", self.args)
         elif self.is_lt():
-            return self.get_nary_expression_string(" < ", self.args)
+            self.name=  self.get_nary_expression_string(" < ", self.args)
         elif self.is_equals():
-            return self.get_nary_expression_string(" == ", self.args)
+            self.name=  self.get_nary_expression_string(" == ", self.args)
         else:
             raise ValueError("Unknown FNode type found")
+        
+        return self.name
 
     @property
     def node_id(self) -> int:

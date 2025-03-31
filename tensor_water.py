@@ -75,10 +75,21 @@ from unified_planning.tensor.constants import *
 
 from tensorflow.python.eager import profiler
 """UTILS"""
+import cProfile
+
+# Nome del file in cui salvare il profilo
+output_file = "output.prof"
+
+# Creazione di un profiler e salvataggio dei dati
+profiler = cProfile.Profile()
+
 
 #tf.config.optimizer.set_experimental_options({"autotune": True})
 #tf.config.run_functions_eagerly(True)
 
+
+# Enable eager execution (if not already enabled)
+#tf.config.experimental_run_functions_eagerly(True)
 
 # create the new directory for the pickle files
 new_folder = os.path.join(os.getcwd(), 'pickle_files/')
@@ -118,9 +129,11 @@ if(DEBUG>=0):
 #writer.write_domain( new_folder + 'domain.pddl')
 
 start_time = time.time()
+
 tensor_state=TfState(w_problem)
 
 GlobalData._class_tensor_state=tensor_state
+#exit()
 
 #TensorState.print_filtered_dict_state(tensor_state.get_tensors(),["next"])
 #exit()
@@ -157,9 +170,17 @@ def execute(plan, initial_state_values):
   return result
 
 initial_state={}
-start_time = time.time()
-#state=plan_sequence(initial_state,result.plan)
+start_time = time.time() 
+
+#cProfile.run('seq_plan=TfPlan(w_problem, tensor_state, sol_plan)')
+profiler.enable()
+
 seq_plan=TfPlan(w_problem, tensor_state, sol_plan)
+
+profiler.disable()
+output_file = "output1b.prof"
+profiler.dump_stats(output_file)
+print(output_file)
 end_time = time.time()
 print("Creation time of act_sequence:", end_time - start_time, "seconds")
 get_memory()
@@ -231,21 +252,20 @@ TBOARD= True #False
 use_callgraph = False
 use_cProfile = False
 
-
+start_time = time.time()
 
 initial_state={}
 initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(3700.0)
 initial_state_values=change_initial_state(seq_plan, initial_state)
-result= execute(seq_plan, initial_state_values)
+#result= execute(seq_plan, initial_state_values)
 
-initial_state_values=change_initial_state(seq_plan, initial_state)
 if TBOARD:
   logdir = "/tmp/logs/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
   tf.profiler.experimental.start(logdir)
   print("TBoard Logdir: ", logdir)
   with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
       result= execute(seq_plan, initial_state_values)
-  #
+      #result=TfState(w_problem)
   tf.profiler.experimental.stop()
 
 if use_callgraph:
@@ -265,10 +285,16 @@ if use_callgraph:
     result= execute(seq_plan, initial_state_values)
 
 if use_cProfile:
-  import cProfile
-  cProfile.run('result= execute(seq_plan, initial_state_values)')
-
+  profiler.enable()
+  output_file = "output2b.prof"
+  result= execute(seq_plan, initial_state_values)
+  
+  profiler.disable()
+  profiler.dump_stats(output_file)
+  print(output_file)
 end_time = time.time()
+time_forward2=end_time - start_time
+
 print("Forward2:", end_time - start_time, "seconds, result: ", result)
 print()
 #exit()
@@ -283,6 +309,8 @@ print("Forward3:", end_time - start_time, "seconds, result: ", result)
 get_memory()
 print("\n====================================")
 times=[]
+random.seed(1234)
+
 for i in range(0,100):
   val=random.randint(0,1500)
   initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(val, dtype=tf.float32)
@@ -301,6 +329,8 @@ for i in range(0,100):
 print("Average time: ", np.mean(times), "seconds")
 print("Standard deviation: ", np.std(times), "seconds")
 
+
+print("Forward2:", time_forward2, "seconds, result: ", result)
 os.sync()
 
 # %%
