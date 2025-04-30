@@ -71,7 +71,9 @@ class SympyToTensorConverter(ABC):
         # Extract free symbols from the expression and sort them by name.
         free_symbols = sorted(sympy_expr.free_symbols, key=lambda s: s.name)
         arg_names = [str(s) for s in free_symbols]
-        arg_indexes = [int(name.split('_')[-1]) for name in arg_names]
+        arg_indexes =  tf.constant([int(name.split('_LIFT_')[-1]) for name in arg_names if '_LIFT_' in name], dtype=tf.int32)
+
+        var_arg_indexes =  tf.constant([int(name.split('_VAR_')[-1]) for name in arg_names if '_VAR_' in name], dtype=tf.int32)
         # Create a lambda function using sympy.lambdify with TensorFlow as backend.
         need_lambdify=False
         
@@ -86,8 +88,8 @@ class SympyToTensorConverter(ABC):
             #f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules={"tensorflow": SympyToTfConverter.sympy_to_tensor_map})
             need_lambdify=True
         
-        @tf.function
-        def tf_func(indexes,state_values):
+        #@tf.function XXXXX
+        def tf_func(indexes,state_values,var_indexes, var_values ):
             # Ensure that the number of indexes matches the number of free symbols.
             #if len(indexes) < len(free_symbols):
             #    raise ValueError("The number of indexes must equal the number of free symbols in the expression.")
@@ -96,7 +98,8 @@ class SympyToTensorConverter(ABC):
             #selected =[tensor[indexes[i]] for i in arg_indexes]  # [tensor[i] for i in arg_indexes
                  
             if need_lambdify:
-                selected= tf.unstack(tf.gather(state_values, tf.gather(indexes, arg_indexes)))
+                concatenated = tf.concat([tf.gather(state_values, tf.gather(indexes, arg_indexes)),  tf.gather(var_values, tf.gather(var_indexes, var_arg_indexes))], axis=0)
+                selected= tf.unstack(concatenated)
                 result=f_lambdified(*selected)
             else:
                 result=f_lambdified()
@@ -157,7 +160,7 @@ class SympyToTensorConverter(ABC):
     def when_sympy_expr_inserted(self, effect):
         return effect.sympy_expr
 
-    def when_sympy_expr_not_inserted(self, effect, effects_set, cond_position, are_prec_satisfied):
+    def when_sympy_expr_not_inserted(self, effect, effects_set, variables_list, cond_position, are_prec_satisfied):
         # Handle different effect kinds
         if  effect.fluent.node_type == OperatorKind.FLUENT_EXP and effect.value.is_bool_constant():
             if effect.value.bool_constant_value():
@@ -172,11 +175,11 @@ class SympyToTensorConverter(ABC):
             value_str = "0.0" if are_prec_satisfied < TF_ZERO else  str(effect.value)
 
         elif effect.kind == EffectKind.DECREASE:
-            value_str = "0.0" if are_prec_satisfied < TF_ZERO else  '(-1.0*)' + str(effect.value)
+            value_str = "0.0" if are_prec_satisfied < TF_ZERO else  '(-1.0)*' + str(effect.value)
         else:
             raise ValueError("Unsupported effect kind")
 
-        lifted_str=GlobalData.get_lifted_string(value_str,effects_set)
+        lifted_str=GlobalData.get_lifted_string(value_str,effects_set, variables_list)
         # Convert to sympy expression and insert it
         if (cond_position>=0):
             sympy_condition=GlobalData._class_conditions_list[cond_position].sympy_expr
@@ -565,7 +568,7 @@ class SympyToTensorConverter(ABC):
         return self.state.lookup(name)
 
 
-    def extract_from_lifted(node_name: tf.Tensor, predicates_indexes: tf.Tensor,  state_values): #XXX This or previous one
+    def extract_from_lifted(node_name: tf.Tensor, predicates_indexes: tf.Tensor,  state_values): #This or previous one
         pos_str = tf.strings.regex_replace(node_name, LIFTED_STR, "")
         pos = tf.strings.to_number(pos_str, out_type=tf.int32)  # Convert to integer
         indx = predicates_indexes[pos] #tf.gather(predicates_indexes, pos)  # Tensor-safe indexing
@@ -607,7 +610,7 @@ class SympyToTfConverter(SympyToTensorConverter):
             Heaviside:  tf_differentiable_heaviside,
         }
         
-    sympy_to_tensor_map = { #XXX only this or previous
+    sympy_to_tensor_map = { #XX only this or previous
             sp.sin: tf.sin,
             sp.cos: tf.cos,
             sp.exp: tf.exp,
@@ -647,8 +650,8 @@ class SympyToTfConverter(SympyToTensorConverter):
     
     def get_constant( node): 
         #tf.print("Node: ", node)
-        return float(node)
-        #return tf.constant(float(node), dtype=tf.float32)
+        return float(node) 
+        #return tf.constant([float(node)], dtype=tf.float32)
     
     def is_tensor( node):
         return node is tf.Tensor

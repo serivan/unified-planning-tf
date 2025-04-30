@@ -13,7 +13,7 @@ import math
 import numpy as np
 import time
 
-os.environ["TF_AUTOGRAPH_CACHE_DIR"] = "/mnt/ramdisk/tensorflow"
+os.environ["TF_AUTOGRAPH_CACHE_DIR"] = "/mnt/ramdisk/"
 os.makedirs(os.environ["TF_AUTOGRAPH_CACHE_DIR"] , exist_ok=True)
 
 import os
@@ -162,11 +162,11 @@ def change_initial_state(plan, initial_state):
   return state_values
 iter= tf.Variable(0, dtype=tf.int32) 
 @tf.function #(reduce_retracing=True) #(experimental_relax_shapes=True)  # #(jit_compile=True)
-def execute(plan, initial_state_values):
+def execute(plan, initial_state_values, variables_values):
   iter.assign_add(1)
   if DEBUG>=0:
     tf.print("Execute iter: ", iter)
-  result= plan.forward(initial_state_values)
+  result= plan.forward(initial_state_values, variables_values)
   return result
 
 initial_state={}
@@ -203,8 +203,10 @@ get_memory()
 
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 initial_state_values=change_initial_state(seq_plan, initial_state)
+
+variables_values=seq_plan.generate_variables_values()
 start_time = time.time()
-result= seq_plan.forward(initial_state_values)
+result= seq_plan.forward(initial_state_values, variables_values)
 #result= 0
 end_time = time.time()
 print("Forward1A:", end_time - start_time, "seconds, result: ", result)
@@ -225,7 +227,7 @@ initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(380.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
-result= seq_plan.forward(initial_state_values)
+result= seq_plan.forward(initial_state_values, variables_values)
 #result= 0
 end_time = time.time()
 print("Forward1B:", end_time - start_time, "seconds, result: ", result)
@@ -238,7 +240,7 @@ initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(380.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
-result= seq_plan.forward(initial_state_values)
+result= seq_plan.forward(initial_state_values, variables_values)
 #result= 0
 end_time = time.time()
 print("Forward1C:", end_time - start_time, "seconds, result: ", result)
@@ -264,7 +266,7 @@ if TBOARD:
   tf.profiler.experimental.start(logdir)
   print("TBoard Logdir: ", logdir)
   with tf.profiler.experimental.Trace('execute', step_num=1, _r=1):
-      result= execute(seq_plan, initial_state_values)
+      result= execute(seq_plan, initial_state_values, variables_values)
       #result=TfState(w_problem)
   tf.profiler.experimental.stop()
 
@@ -282,12 +284,12 @@ if use_callgraph:
   from pycallgraph.output import GraphvizOutput
   with PyCallGraph(output=graphviz):
 
-    result= execute(seq_plan, initial_state_values)
+    result= execute(seq_plan, initial_state_values, variables_values)
 
 if use_cProfile:
   profiler.enable()
   output_file = "output2b.prof"
-  result= execute(seq_plan, initial_state_values)
+  result= execute(seq_plan, initial_state_values, variables_values)
   
   profiler.disable()
   profiler.dump_stats(output_file)
@@ -303,7 +305,7 @@ initial_state["agricultural_demand(day_2001_10_01)"]=tf.constant(370.0)
 print("set initial state: ",initial_state["agricultural_demand(day_2001_10_01)"])
 initial_state_values=change_initial_state(seq_plan, initial_state)
 start_time = time.time()
-result= execute(seq_plan, initial_state_values)
+result= execute(seq_plan, initial_state_values, variables_values)
 end_time = time.time()
 print("Forward3:", end_time - start_time, "seconds, result: ", result)
 get_memory()
@@ -318,10 +320,11 @@ for i in range(0,100):
   initial_state_values=change_initial_state(seq_plan, initial_state)
   
   start_time = time.time()
-  result= execute(seq_plan, initial_state_values)
+  result= execute(seq_plan, initial_state_values, variables_values)
   end_time = time.time()
   delta=end_time - start_time
-  print("Forward-"+str(i)+": ", end_time - start_time, "seconds, result: ", result)
+  print("Forward-"+str(i)+": ", end_time - start_time, "seconds") 
+  print(" result: ", result)
   get_memory()
   times.append(delta)
   print()

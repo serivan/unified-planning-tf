@@ -13,7 +13,9 @@ DEVICE='/CPU:0'
 EPSILON=1e-7  #tf.keras.backend.epsilon()
 TENSOR_EPSILON = 1e-6
 ARE_PREC_SATISF_STR='ARE_PREC_SATISFIED'
+APPLY_ACT_STR='APPLY_ACT'
 LIFTED_STR="_LIFT_"
+VAR_STR="_VAR_"
 
 TF_ACTV_FN_BOOL = tf.nn.tanh
 TF_ACTV_FN_REAL = tf.nn.relu
@@ -87,6 +89,8 @@ class GlobalData():
  
     _class_effects_list=[]  # List to store the effects
     _class_effects_map={} # position of the effect in _effects_list
+
+    _class_variables_list=[]  # List to store the variables
     
     apply_action_fn_list=list() # List to store the apply action lamba functions
     tensor_state=None
@@ -200,13 +204,21 @@ class GlobalData():
 
 
      
-    def get_lifted_string(prec_str:str, predicates_list, lifted_str:str=LIFTED_STR):
+    def get_lifted_string(prec_str:str, predicates_list,variables_list=None,  lifted_str:str=LIFTED_STR, var_str:str=VAR_STR):
         ''' Replace the predicates in the string with the lifted string+index'''
         str_predicates_list=[(pos,str(pred)) for pos,pred in enumerate(predicates_list)]
         str_predicates_list=sorted(str_predicates_list, key=lambda x: len(x[1]), reverse=True) #Avoid substring substitution
-     
+
+        #print("str_predicates_list:", str_predicates_list)
         for indx,pred in str_predicates_list:
             prec_str=prec_str.replace(pred, lifted_str+str(indx))
+
+
+        str_variables_list=[(pos,str(var)) for pos,var in enumerate(variables_list)]
+        str_variables_list=sorted(str_variables_list, key=lambda x: len(x[1]), reverse=True)
+        for indx,var in str_variables_list:
+            prec_str=prec_str.replace(var, var_str+str(indx))
+
         return prec_str
    
 

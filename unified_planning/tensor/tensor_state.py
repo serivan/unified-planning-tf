@@ -10,6 +10,7 @@ from unified_planning.tensor.tensor_fluent import TfFluent
 from unified_planning.tensor.constants import *
 from unified_planning.model import OperatorKind
 from unified_planning.model import EffectKind
+from unified_planning.model.metrics import MinimizeSequentialPlanLength
 
 #from tensorflow.lookup.experimental import MutableHashTable
 from tensorflow.lookup.experimental import DenseHashTable
@@ -34,7 +35,10 @@ class TensorState(ABC):
         # Populate the initial state (delegated to a subclass, if necessary)
 
         self._problem_metric=self.problem.quality_metrics[0]
-        self.str_metric_expr=str(self._problem_metric.expression)
+        if self._problem_metric == MinimizeSequentialPlanLength():
+            self.str_metric_expr='sequential-plan-length'
+        else:
+            self.str_metric_expr=str(self._problem_metric.expression)
         self.tf_metric_expr=tf.constant(self.str_metric_expr, tf.string)
 
         if initialize==True:
@@ -115,7 +119,7 @@ class TensorState(ABC):
             #print("Fluent:", fluent)
             #print("Initial value:", value)
             fluent_name=fluent.get_name()
-            if fluent_name == "large_container" or fluent_name == "small_container":
+            if fluent_name == self.str_metric_expr:
                 trainable=True
             else:  
                 trainable=False

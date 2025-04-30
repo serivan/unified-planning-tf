@@ -56,17 +56,21 @@ from unified_planning.tensor.tensor_plan import TensorPlan, TfPlan
 from unified_planning.tensor.tensor_state import TensorState, TfState
 from unified_planning.io import PDDLWriter, PDDLReader
 from unified_planning.model.metrics import MinimizeSequentialPlanLength
+from unified_planning.model.metrics import MinimizeExpressionOnFinalState
 
+
+from unified_planning.plans import SequentialPlan
 
 #Profiling
 
-from pycallgraph import PyCallGraph
-from pycallgraph.output import GraphvizOutput
+from pycallgraph2 import PyCallGraph
+from pycallgraph2.output import GraphvizOutput
 
 
 """UTILS"""
 EPSILON=1e-7  #tf.keras.backend.epsilon()
 SOL_FILE="result_plan.sol"
+SOL_FILE="r.sol"
 
 
 """#Tensorboard"""
@@ -107,8 +111,8 @@ tracking_address = "./logs/fit/" # the path of your log file.
 if __name__ == "__main__":
     tb = program.TensorBoard()
     tb.configure(argv=[None, '--logdir', tracking_address])
-    url = tb.launch()
-    print(f"Tensorflow listening on {url}")
+    #url = tb.launch()
+    #print(f"Tensorflow listening on {url}")
 
 
 
@@ -118,36 +122,67 @@ if __name__ == "__main__":
 problem = Problem("WaterTransferProblem")
 
 # Define fluent state variables
-large_container = Fluent("large_container", IntType())
-small_container = Fluent("small_container", IntType())
+large_container = Fluent("large_container", RealType())
+small_container = Fluent("small_container", RealType())
 
-cost = Fluent("cost", IntType())
+cost = Fluent("cost", RealType())
 
 # Define actions
-fill_large = InstantaneousAction("fill_large")
-#fill_large.add_effect(large_container,Plus(large_container, small_container))
-fill_large.add_increase_effect(cost,Times(large_container, small_container))
-fill_large.add_decrease_effect(small_container,1)
+fill_largei = InstantaneousAction("fill_large", amount=RealType())
+amount = fill_largei.parameters
 
-fill_large.add_increase_effect(large_container, small_container)
+#fill_large.add_effect(large_container,Plus(large_container, small_container))
+
+fill_largei.add_increase_effect(cost,Times(small_container, amount))
+#fill_largei.add_increase_effect(cost,Times(large_container, small_container))
+#fill_largei.add_increase_effect(cost, amount)
+fill_largei.add_decrease_effect(small_container,amount)
+
+fill_largei.add_increase_effect(large_container, amount)
 # Example precondition: Only fill if large_container is empty
-fill_large.add_precondition(LT(large_container, 80))
-fill_large.add_precondition(GE(large_container, 0))
-fill_large.add_precondition(LT(Times(large_container, small_container), 800))
+fill_largei.add_precondition(LT(large_container, 80))
+fill_largei.add_precondition(GE(small_container, amount))
+fill_largei.add_precondition(LT(Times(large_container, small_container), 800))
 
 # Add conditional effect
-fill_large.add_effect( cost, Plus(cost, large_container), GT(small_container, 10)) 
+fill_largei.add_effect( cost, Plus(cost, amount), GT(small_container, 10)) 
+
+# Define actions
+#fill_large = InstantaneousAction("fill_large", amount=RealType())
+fill_larged = DurativeAction("fill_large", amount=RealType())
+amount = fill_larged.parameters
+fill_larged.set_fixed_duration(amount)
+#fill_larged.add_effect(large_container,Plus(large_container, small_container))
+fill_larged.add_increase_effect(EndTiming(),cost,Times(large_container, small_container))
+fill_larged.add_increase_effect(EndTiming(),cost, amount)
+fill_larged.add_decrease_effect(EndTiming(),small_container,amount)
+
+fill_larged.add_increase_effect(EndTiming(),large_container, amount)
+# Example precondition: Only fill if large_container is empty
+fill_larged.add_condition(StartTiming(), LT(large_container, 80))
+fill_larged.add_condition(StartTiming(), GE(large_container, 0))
+fill_larged.add_condition(StartTiming(), LT(Times(large_container, small_container), 800))
+
+# Add conditional effect
+#fill_larged.add_condition(StartTiming(),  cost, Plus(cost, large_container), GT(small_container, 10)) 
+
 
 # Add fluents and actions to the problem
 problem.add_fluent(large_container)
 problem.add_fluent(small_container)
 problem.add_fluent(cost)
-problem.add_action(fill_large)
+problem.add_action(fill_largei)
+#problem.add_action(fill_larged)
 #problem.set_initial_value(large_container, tf.constant(20))
 problem.set_initial_value(large_container, 70)
 problem.set_initial_value(small_container, 5)
 
 problem.set_initial_value(cost, 0)
+
+#amount = Fluent("amount", RealType())
+#problem.set_initial_value(amount, 5)
+#problem.add_fluent(amount)
+
 
 #NEW TEST PROBLEM
 #problem = Problem("WaterTransferProblem")
@@ -164,10 +199,11 @@ move.add_precondition(robot_at(l_from))
 move.add_precondition(LT(large_container, 80))
 move.add_precondition(GE(large_container, 0))
 
+move.add_increase_effect(cost, large_container)
+move.add_increase_effect(cost, small_container)
 move.add_effect(robot_at(l_from), False)
 move.add_effect(robot_at(l_to), True)
 move.add_decrease_effect(large_container,5)
-move.add_increase_effect(cost, large_container)
 
 print(move)
 problem.add_fluent(robot_at, default_initial_value=False)
@@ -185,15 +221,26 @@ for i in range(NLOC - 1):
 problem.add_goal(robot_at(locations[-1]))
 problem.add_goal(GE(large_container, 10))
 
+
+#metric = MinimizeSequentialPlanLength()
+metric=MinimizeExpressionOnFinalState(cost)
+problem.add_quality_metric(metric)
 print("Prolem: ",problem)
 
-metric = MinimizeSequentialPlanLength()
-problem.add_quality_metric(metric)
 
+# Define the file path
+domain_file = "domain.pddl"
+problem_file = "problem.pddl"
+
+# Create a writer and export the problem
+writer = PDDLWriter(problem)
+#writer.write_domain(domain_file)
+writer.write_problem(problem_file)
 
 # Solve the planning problem
 sol_plan=None
 if not os.path.exists(SOL_FILE):
+
   with OneshotPlanner(name='pyperplan') as planner:
     result = planner.solve(problem)
     if result.status == up.engines.PlanGenerationResultStatus.SOLVED_SATISFICING:
@@ -210,28 +257,55 @@ if not os.path.exists(SOL_FILE):
 initial_state ={}
 
 tensor_state=TfState(problem)
-if os.path.exists(SOL_FILE):
+if False and os.path.exists(SOL_FILE):
   # Reload the saved plan from the file
   # Reload the saved PDDL solution file
   reader = PDDLReader()
-  sol_plan = reader.parse_plan(problem,"result_plan.sol")
+  sol_plan = reader.parse_plan(problem,SOL_FILE)
+  print("Plan: ", sol_plan)
+
+#  Insert the manually defined plan
+sol_plan = SequentialPlan([ActionInstance(move, (locations[0], locations[1])),
+    ActionInstance(fill_largei, 500.0)])
+
+def change_initial_state(plan, initial_state):
+  state_values=plan.tensor_state.get_initial_state_values()
+  for fluent, value in initial_state.items():
+        #print("Fluent:", fluent)
+        #print("Initial value:", value)
+
+        pos=plan.tensor_state.get_key_position(fluent)
+        if pos>=0:
+            state_values[pos].assign(value)
+            tf.print("Fluent: ", fluent, " value: ", state_values[pos])
+
   
-@tf.function
-def plan_sequence(my_state, plan):
+  return state_values
+
+#@tf.function
+def plan_sequence(initial_state, plan):
   seq_plan=plan #TensorPlan(problem, plan)
+  initial_state=change_initial_state(seq_plan, initial_state)
+  #var=seq_plan.states_sequence[0]["large_container"]
 
-  var=seq_plan.states_sequence[0]["large_container"]
-  with tf.GradientTape() as tape:
-    tape.watch(seq_plan.states_sequence[0]['large_container'])
-    loss=plan.forward(initial_state)
+  variables_values=seq_plan.generate_variables_values()
 
-  grad = tape.gradient(loss, var)
+  var_pos=seq_plan.tensor_state.get_key_position("large_container")
+  var=tf.gather(initial_state, var_pos)
+  with tf.GradientTape(persistent=True) as tape:
+    tape.watch(variables_values)
+    loss, are_prec_sat, prec_sat, goals=plan.forward(initial_state,variables_values)
+    #loss=plan.forward_sequence(initial_state)
+
+  state=seq_plan.get_state_values()
+  grad = tape.gradient(loss, variables_values)
+  print("Loss: ",loss, " var: ",var)
+  tf.print("Prec sat: ",are_prec_sat)
   tf.print("Grad: ",grad)
-  state=seq_plan.get_state()
   #tf.print("new state cost: ", state["cost"] )
   #value=seq_plan.get_plan_metric()
   #tf.print("Plan metric:", value)
-  return {} #state.convert_to_Tf()
+  return loss #state.convert_to_Tf()
 
 
 tensor_state.set_attr(large_container.name, 70)
@@ -253,8 +327,11 @@ print()
 
 start_time = time.time()
 #print("Actions", act_list)
-seq_plan.forward(initial_state)
-state=seq_plan.get_state() 
+state_values=seq_plan.tensor_state.get_initial_state_values()
+variables_values=seq_plan.generate_variables_values()
+
+seq_plan.forward(state_values,variables_values)
+state=seq_plan.get_state_values() 
 
 end_time = time.time()
 #print("check state", check_state["large_container"] )
@@ -272,7 +349,7 @@ print("state2", initial_state["large_container"] )
 # Measure execution time of act_sequence
 start_time = time.time()
 plan_sequence(initial_state, seq_plan)
-state2=seq_plan.get_state() #.convert_to_Tf()
+state2=seq_plan.get_state_values() #.convert_to_Tf()
 #seq_plan=TensorPlan(problem, result.plan)
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
@@ -286,26 +363,6 @@ print("2.Execution time of act_sequence:", end_time - start_time, "seconds")
 #  print("Not Equal")
 
 print()
-
-var=seq_plan.states_sequence[0]["large_container"]
-
-start_time = time.time()
-
-end_time = time.time()
-state=seq_plan.get_final_state() 
-with tf.GradientTape() as tape:
-  tape.watch(seq_plan.states_sequence[0]['large_container'])
-  loss=seq_plan.forward(initial_state)
-
-grad = tape.gradient(loss, var)
-#print("Final state:", seq_plan.get_final_state())
-print("Grad: ",grad)
-
-print("new state cost", state["cost"] )
-print("Execution time of act_sequence:", end_time - start_time, "seconds")
-print()
-
-
 
 #tensor_state.set_attr(large_container.name, 40)
 #init_state=tensor_state.convert_to_Tf()
@@ -327,12 +384,12 @@ start_time = time.time()
 plan_sequence(initial_state,seq_plan)
 
 
-state3=seq_plan.get_state() #.convert_to_Tf()
+state3=seq_plan.get_state_values() #.convert_to_Tf()
 #seq_plan=TensorPlan(problem, result.plan)
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
 
-print("new state3 cost ", state3["cost"] )
+#print("new state3 cost ", state3["cost"] )
 #print("Actions", act_list)
 
 print("3.Execution time of act_sequence:", end_time - start_time, "seconds")
@@ -348,7 +405,7 @@ initial_state["large_container"]=tf.constant(20.0)
 print("state3a", initial_state["large_container"] )
 start_time = time.time()
 plan_sequence(initial_state,seq_plan)
-state3=seq_plan.get_state() #.convert_to_Tf()
+state3=seq_plan.get_state_values() #.convert_to_Tf()
 #seq_plan=TensorPlan(problem, result.plan)
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
@@ -356,7 +413,7 @@ end_time = time.time()
 #print("new state3", state3["large_container"] )
 #print("Actions", act_list)
 
-print("new state3a cost  ", state3["cost"] )
+#print("new state3a cost  ", state3["cost"] )
 print("3a.Execution time of act_sequence:", end_time - start_time, "seconds")
 #if state3==check_state:
 #  print("Equal")
@@ -373,15 +430,15 @@ for i in range(80, -10, -5):
   print("state", initial_state["large_container"] )
   start_time = time.time()
   plan_sequence(initial_state,seq_plan)
-  state3=seq_plan.get_state() #.convert_to_Tf()
+  state3=seq_plan.get_state_values() #.convert_to_Tf()
   #seq_plan=TensorPlan(problem, result.plan)
   #state=seq_plan.forward(initial_state)
   end_time = time.time()
 
-  print("new state4 cost ", state3["cost"] )
+  #print("new state4 cost ", state3["cost"] )
   #print("Actions", act_list)
 
-  print("4.Execution time of act_sequence:", end_time - start_time, "seconds")
+  print(i,".Execution time of act_sequence:", end_time - start_time, "seconds")
 
   #if state3==check_state:
   #  print("Equal")
@@ -390,27 +447,7 @@ for i in range(80, -10, -5):
 
   print()
 
-
-tensor_state.set_attr(large_container.name, 40)
-print("state4", tensor_state["large_container"] )
-# Measure execution time of act_sequence
-start_time = time.time()
-#state=plan_sequence(initial_state,result.plan)
-seq_plan=TfPlan(problem, sol_plan)
-seq_plan.forward(tensor_state)
-state4=seq_plan.get_state() #.convert_to_Tf()
-value=seq_plan.get_plan_metric()
-print("Plan metric:", value)
-end_time = time.time()
-#print("new state4", state4["large_container"] )
-#print("Actions", act_list)
-
-print("4.Execution time of act_sequence:", end_time - start_time, "seconds")
-if state4==check_state:
-  print("Equal")
-else:
-  print("Not Equal")
-
+exit()
 
 # Write the graph to TensorBoard logs
 with writer.as_default():
@@ -441,7 +478,7 @@ with writer.as_default():
     #new_state = simulator.apply(new_state, fill_large)
     #print("new state: ",new_state)   
 
-    #init = simulator.get_state()
+    #init = simulator.get_state_values()
     #print("init", init)
 
     #c1=myadd(a1,b1)
