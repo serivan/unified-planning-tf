@@ -61,6 +61,7 @@ from unified_planning.model.metrics import MinimizeExpressionOnFinalState
 
 from unified_planning.plans import SequentialPlan
 
+from unified_planning.tensor.constants import *
 #Profiling
 
 from pycallgraph2 import PyCallGraph
@@ -126,26 +127,55 @@ large_container = Fluent("large_container", RealType())
 small_container = Fluent("small_container", RealType())
 
 cost = Fluent("cost", RealType())
-
 # Define actions
-fill_largei = InstantaneousAction("fill_large", amount=RealType())
+fill_largei = InstantaneousAction("fill_largei", amount=RealType())
 amount = fill_largei.parameters
 
 #fill_large.add_effect(large_container,Plus(large_container, small_container))
 
-fill_largei.add_increase_effect(cost,Times(small_container, amount))
+fill_largei.add_increase_effect(cost,Plus(small_container, amount))
 #fill_largei.add_increase_effect(cost,Times(large_container, small_container))
-#fill_largei.add_increase_effect(cost, amount)
-fill_largei.add_decrease_effect(small_container,amount)
+fill_largei.add_increase_effect(small_container, amount)
+#fill_largei.add_decrease_effect(small_container,amount)
 
-fill_largei.add_increase_effect(large_container, amount)
+fill_largei.add_increase_effect(cost, small_container)
+
+#fill_largei.add_decrease_effect(large_container, amount)
 # Example precondition: Only fill if large_container is empty
 fill_largei.add_precondition(LT(large_container, 80))
-fill_largei.add_precondition(GE(small_container, amount))
-fill_largei.add_precondition(LT(Times(large_container, small_container), 800))
+##fill_largei.add_precondition(GE(amount, 30))
+#fill_largei.add_precondition(GE(small_container, amount))
+#fill_largei.add_precondition(LT(Times(large_container, small_container), 800))
+fill_largei.add_precondition(GE(small_container, 0))
+fill_largei.add_precondition(GE(amount, 0))
 
 # Add conditional effect
 fill_largei.add_effect( cost, Plus(cost, amount), GT(small_container, 10)) 
+
+# Define actions
+fill_large_neg = InstantaneousAction("fill_large_neg", amount=RealType())
+amount = fill_large_neg.parameters
+
+#fill_large.add_effect(large_container,Plus(large_container, small_container))
+
+fill_large_neg.add_increase_effect(cost,Plus(small_container, amount))
+#fill_large_neg.add_increase_effect(cost,Times(large_container, small_container))
+fill_large_neg.add_decrease_effect(small_container, 50)
+#fill_large_neg.add_decrease_effect(small_container,amount)
+
+fill_large_neg.add_increase_effect(cost, small_container)
+
+#fill_large_neg.add_decrease_effect(large_container, amount)
+# Example precondition: Only fill if large_container is empty
+fill_large_neg.add_precondition(LT(large_container, 80))
+##fill_large_neg.add_precondition(GE(amount, 30))
+#fill_large_neg.add_precondition(GE(small_container, amount))
+#fill_large_neg.add_precondition(LT(Times(large_container, small_container), 800))
+fill_large_neg.add_precondition(LT(small_container, 10))
+fill_large_neg.add_precondition(GE(amount, 0))
+
+# Add conditional effect
+fill_large_neg.add_effect( cost, Plus(cost, amount), GT(small_container, 10)) 
 
 # Define actions
 #fill_large = InstantaneousAction("fill_large", amount=RealType())
@@ -155,6 +185,8 @@ fill_larged.set_fixed_duration(amount)
 #fill_larged.add_effect(large_container,Plus(large_container, small_container))
 fill_larged.add_increase_effect(EndTiming(),cost,Times(large_container, small_container))
 fill_larged.add_increase_effect(EndTiming(),cost, amount)
+#fill_larged.add_increase_effect(cost, small_container)
+
 fill_larged.add_decrease_effect(EndTiming(),small_container,amount)
 
 fill_larged.add_increase_effect(EndTiming(),large_container, amount)
@@ -172,6 +204,7 @@ problem.add_fluent(large_container)
 problem.add_fluent(small_container)
 problem.add_fluent(cost)
 problem.add_action(fill_largei)
+problem.add_action(fill_large_neg)
 #problem.add_action(fill_larged)
 #problem.set_initial_value(large_container, tf.constant(20))
 problem.set_initial_value(large_container, 70)
@@ -198,6 +231,7 @@ move.add_precondition(connected(l_from, l_to))
 move.add_precondition(robot_at(l_from))
 move.add_precondition(LT(large_container, 80))
 move.add_precondition(GE(large_container, 0))
+move.add_precondition(GE(small_container, 30))
 
 move.add_increase_effect(cost, large_container)
 move.add_increase_effect(cost, small_container)
@@ -205,7 +239,7 @@ move.add_effect(robot_at(l_from), False)
 move.add_effect(robot_at(l_to), True)
 move.add_decrease_effect(large_container,5)
 
-print(move)
+tf.print(move)
 problem.add_fluent(robot_at, default_initial_value=False)
 problem.add_fluent(connected, default_initial_value=False)
 problem.add_action(move)
@@ -218,14 +252,15 @@ problem.set_initial_value(robot_at(locations[0]), True)
 for i in range(NLOC - 1):
     problem.set_initial_value(connected(locations[i], locations[i+1]), True)
 
-problem.add_goal(robot_at(locations[-1]))
-problem.add_goal(GE(large_container, 10))
+problem.add_goal(robot_at(locations[1]))
+#problem.add_goal(robot_at(locations[-1]))
+#problem.add_goal(GE(small_container, 30))
 
 
 #metric = MinimizeSequentialPlanLength()
 metric=MinimizeExpressionOnFinalState(cost)
 problem.add_quality_metric(metric)
-print("Prolem: ",problem)
+tf.print("Prolem: ",problem)
 
 
 # Define the file path
@@ -244,12 +279,12 @@ if not os.path.exists(SOL_FILE):
   with OneshotPlanner(name='pyperplan') as planner:
     result = planner.solve(problem)
     if result.status == up.engines.PlanGenerationResultStatus.SOLVED_SATISFICING:
-        print("Pyperplan returned: %s" % result.plan)
+        tf.print("Pyperplan returned: %s" % result.plan)
         # Save result.plan to a file
         writer = PDDLWriter(problem)
         writer.write_plan(result.plan, "result_plan.sol")
     else:
-        print("No plan found.")
+        tf.print("No plan found.")
 
 
 # Set the initial state
@@ -262,17 +297,19 @@ if False and os.path.exists(SOL_FILE):
   # Reload the saved PDDL solution file
   reader = PDDLReader()
   sol_plan = reader.parse_plan(problem,SOL_FILE)
-  print("Plan: ", sol_plan)
+  tf.print("Plan: ", sol_plan)
 
 #  Insert the manually defined plan
-sol_plan = SequentialPlan([ActionInstance(move, (locations[0], locations[1])),
-    ActionInstance(fill_largei, 500.0)])
+sol_plan = SequentialPlan([ActionInstance(fill_largei, 500.0),ActionInstance(fill_large_neg, 500.0),
+                           ActionInstance(move, (locations[0], locations[1])),
+    ]) 
+    #,    ActionInstance(fill_largei, 200.0)])
 
 def change_initial_state(plan, initial_state):
   state_values=plan.tensor_state.get_initial_state_values()
   for fluent, value in initial_state.items():
-        #print("Fluent:", fluent)
-        #print("Initial value:", value)
+        #tf.print("Fluent:", fluent)
+        #tf.print("Initial value:", value)
 
         pos=plan.tensor_state.get_key_position(fluent)
         if pos>=0:
@@ -282,31 +319,177 @@ def change_initial_state(plan, initial_state):
   
   return state_values
 
+
+
 #@tf.function
-def plan_sequence(initial_state, plan):
-  seq_plan=plan #TensorPlan(problem, plan)
-  initial_state=change_initial_state(seq_plan, initial_state)
-  #var=seq_plan.states_sequence[0]["large_container"]
+def plan_sequence(initial_state, plan, learning_rate=0.1, steps=100):
+  seq_plan = plan  # assuming `plan` is actually a TensorPlan object
+  initial_state = change_initial_state(seq_plan, initial_state)
 
-  variables_values=seq_plan.generate_variables_values()
+  variables_values1 = seq_plan.generate_variables_values()
+  variables_values2 = seq_plan.generate_variables_values()
+  variables_values = tf.Variable([variables_values1, variables_values2], axis=0)
+  #variables_values=variables_values1+variables_values2
+  
+  
+  var_pos = seq_plan.tensor_state.get_key_position("large_container")
+  var = tf.gather(initial_state, var_pos)
 
-  var_pos=seq_plan.tensor_state.get_key_position("large_container")
-  var=tf.gather(initial_state, var_pos)
-  with tf.GradientTape(persistent=True) as tape:
-    tape.watch(variables_values)
-    loss, are_prec_sat, prec_sat, goals=plan.forward(initial_state,variables_values)
-    #loss=plan.forward_sequence(initial_state)
+  tf.print("===================================================")
+  tf.print("Orig Vars:", variables_values)
+  variables_values_copy = tf.Variable(variables_values.numpy(), dtype=variables_values.dtype, trainable=True)
+  prec_satisfied=1
+  goals_satisfied=1
+  for step in range(steps):
+    with tf.GradientTape(persistent=True) as tape:
+      tape.watch(variables_values1)
+      tape.watch(variables_values2)
+      state=initial_state
+      #loss, are_prec_sat, prec_satisfied, goals_satisfied, new_state = plan.forward(initial_state, variables_values)
+      loss1, are_prec_sat, state = plan.forward_step(initial_state, variables_values1)
+      loss2, are_prec_sat, new_state = plan.forward_step(state, variables_values2)
+      loss = loss2  # or however you want to aggregate it
+    grad1 = tape.gradient(loss, variables_values1)
+    grad2 = tape.gradient(loss, variables_values2)
+    del tape
 
-  state=seq_plan.get_state_values()
-  grad = tape.gradient(loss, variables_values)
-  print("Loss: ",loss, " var: ",var)
-  tf.print("Prec sat: ",are_prec_sat)
-  tf.print("Grad: ",grad)
-  #tf.print("new state cost: ", state["cost"] )
-  #value=seq_plan.get_plan_metric()
-  #tf.print("Plan metric:", value)
-  return loss #state.convert_to_Tf()
+    # Convert IndexedSlices to dense if necessary
+    if isinstance(grad1, tf.IndexedSlices):
+      grad1 = tf.convert_to_tensor(grad1)
+      grad2 = tf.convert_to_tensor(grad2)
 
+    # Clip gradients by global norm (recommended)
+    clipped_grad1, _ = tf.clip_by_global_norm([grad1], clip_norm=10.0)
+    clipped_grad1 = clipped_grad1[0]  # unpack list
+
+    if DEBUG> 0:
+      variables_values_copy = tf.Variable(variables_values1.numpy(), dtype=variables_values1.dtype, trainable=True)
+
+    # Gradient descent update
+    variables_values1.assign_sub(learning_rate * clipped_grad1)
+
+    # Clip gradients by global norm (recommended)
+    clipped_grad2, _ = tf.clip_by_global_norm([grad2], clip_norm=10.0)
+    clipped_grad2 = clipped_grad2[0]  # unpack list
+
+    # Gradient descent update
+    variables_values2.assign_sub(learning_rate * clipped_grad2)
+
+    if True or step % 10 == 0 or step == steps - 1:
+      tf.print(f"Step {step} - Loss: {loss.numpy():.4f}")
+      tf.print(step, " - Gradient:", [grad1,grad2], ", clipped:", [clipped_grad1,clipped_grad2])
+      tf.print("Prec sat:", are_prec_sat)
+      #tf.print("Vars:", variables_values)
+
+      for i in range(len(GlobalData._class_variables_list)):
+        tf.print("Variable", i, " name: ", GlobalData._class_variables_list[i], ", current: ", variables_values_copy[i], ", new value: ", variables_values1[i], " new: ", variables_values2[i])
+
+      for i in range(seq_plan.tensor_state.size()):
+        if state[i] != new_state[i]:
+          tf.print("key1: ",seq_plan.tensor_state.get_key(i), "=", state[i])
+        tf.print("key2: ",seq_plan.tensor_state.get_key(i), "=", new_state[i])
+      tf.print("===================================================")
+
+      tf.print("Prec sat:", prec_satisfied)
+      tf.print("Goals sat:", goals_satisfied)
+      os.sync()
+  return loss
+
+
+
+#@tf.function
+def plan_sequence1(initial_state, plan, learning_rate=0.1, steps=100):
+  seq_plan = plan  # assuming `plan` is actually a TensorPlan object
+  initial_state = change_initial_state(seq_plan, initial_state)
+
+  variables_values = seq_plan.generate_variables_values()
+  var_pos = seq_plan.tensor_state.get_key_position("large_container")
+  var = tf.gather(initial_state, var_pos)
+
+  tf.print("===================================================")
+  tf.print("Orig Vars:", variables_values)
+  variables_values_copy = tf.Variable(variables_values.numpy(), dtype=variables_values.dtype, trainable=True)
+  prec_satisfied=1
+  goals_satisfied=1
+  for step in range(steps):
+    with tf.GradientTape(persistent=False) as tape:
+      tape.watch(variables_values)
+      state=initial_state
+      #loss, are_prec_sat, prec_satisfied, goals_satisfied, new_state = plan.forward(initial_state, variables_values)
+      loss, are_prec_sat, state = plan.forward_step(initial_state, variables_values)
+      loss, are_prec_sat, new_state = plan.forward_step(state, variables_values)
+    
+    grad = tape.gradient(loss, variables_values)
+
+    # Convert IndexedSlices to dense if necessary
+    if isinstance(grad, tf.IndexedSlices):
+      grad = tf.convert_to_tensor(grad)
+
+    # Clip gradients by global norm (recommended)
+    clipped_grad, _ = tf.clip_by_global_norm([grad], clip_norm=10.0)
+    clipped_grad = clipped_grad[0]  # unpack list
+
+    if DEBUG> 0:
+      variables_values_copy = tf.Variable(variables_values.numpy(), dtype=variables_values.dtype, trainable=True)
+
+    # Gradient descent update
+    variables_values.assign_sub(learning_rate * clipped_grad)
+
+    if True or step % 10 == 0 or step == steps - 1:
+      tf.print(f"Step {step} - Loss: {loss.numpy():.4f}")
+      tf.print(step, " - Gradient:", grad, ", clipped:", clipped_grad)
+      tf.print("Prec sat:", are_prec_sat)
+      #tf.print("Vars:", variables_values)
+
+      for i in range(len(GlobalData._class_variables_list)):
+        tf.print("Variable", i, " name: ", GlobalData._class_variables_list[i], ", current: ", variables_values_copy[i], ", new value: ", variables_values[i])
+
+      for i in range(seq_plan.tensor_state.size()):
+        if state[i] != new_state[i]:
+          tf.print("key1: ",seq_plan.tensor_state.get_key(i), "=", state[i])
+        tf.print("key2: ",seq_plan.tensor_state.get_key(i), "=", new_state[i])
+      tf.print("===================================================")
+
+      tf.print("Prec sat:", prec_satisfied)
+      tf.print("Goals sat:", goals_satisfied)
+      os.sync()
+  return loss
+
+
+#@tf.function
+def plan_sequenceA(initial_state, plan, learning_rate=0.1, steps=100):
+    seq_plan = plan  # assuming `plan` is actually a TensorPlan object
+    initial_state = change_initial_state(seq_plan, initial_state)
+
+    # Get the variables to optimize
+    variables_values = seq_plan.generate_variables_values()
+
+
+    tf.print("===================================================")
+    tf.print("===================================================")
+    tf.print("Orig Vars:", variables_values)
+
+
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+
+    @tf.function
+    def train_step(variables_values):
+        with tf.GradientTape() as tape:
+            loss, are_prec_sat, prec_sat, goals = plan.forward_step(initial_state, variables_values)
+        grads = tape.gradient(loss, [variables_values])
+        optimizer.apply_gradients(zip(grads, [variables_values]))
+        return loss, are_prec_sat, grads
+
+    for step in range(steps):
+        loss, are_prec_sat, grads = train_step(variables_values)
+
+        if step % 1 == 0 or step == steps - 1:
+            tf.print(f"Step {step} - Loss: {loss.numpy():.4f}")
+            tf.print("Gradient:", grads)
+            tf.print("Prec sat:", are_prec_sat)
+            tf.print("Vars:", variables_values)
+            tf.print("===================================================")
+    return loss
 
 tensor_state.set_attr(large_container.name, 70)
 
@@ -316,17 +499,18 @@ tensor_state.set_attr(large_container.name, 70)
 initial_state={}
 initial_state["large_container"]=tf.constant(70.0)
 
-print("state", initial_state["large_container"] )
+tf.print("state", initial_state["large_container"] )
 # Measure execution time of act_sequence
 start_time = time.time()
 #state=plan_sequence(initial_state,result.plan)
 seq_plan=TfPlan(problem, tensor_state, sol_plan)
 end_time = time.time()
-print("Creation time of act_sequence:", end_time - start_time, "seconds")
-print()
+
+tf.print("Creation time of act_sequence:", end_time - start_time, "seconds")
+tf.print()
 
 start_time = time.time()
-#print("Actions", act_list)
+#tf.print("Actions", act_list)
 state_values=seq_plan.tensor_state.get_initial_state_values()
 variables_values=seq_plan.generate_variables_values()
 
@@ -334,18 +518,18 @@ seq_plan.forward(state_values,variables_values)
 state=seq_plan.get_state_values() 
 
 end_time = time.time()
-#print("check state", check_state["large_container"] )
-print("1.Execution time of act_sequence:", end_time - start_time, "seconds")
+#tf.print("check state", check_state["large_container"] )
+tf.print("1.Execution time of act_sequence:", end_time - start_time, "seconds")
 
-print()
+tf.print()
 
 #tensor_state.set_attr(large_container.name, 70)
 #init_state=tensor_state.convert_to_Tf()
 initial_state={}
 initial_state["large_container"]=tf.constant(20.1)
 
-print("state2", initial_state["large_container"] )
-#print("state2", tensor_state["large_container"] )
+tf.print("state2", initial_state["large_container"] )
+#tf.print("state2", tensor_state["large_container"] )
 # Measure execution time of act_sequence
 start_time = time.time()
 plan_sequence(initial_state, seq_plan)
@@ -354,26 +538,27 @@ state2=seq_plan.get_state_values() #.convert_to_Tf()
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
 
-#print("new state2", state2["large_container"] )
+#tf.print("new state2", state2["large_container"] )
 
-print("2.Execution time of act_sequence:", end_time - start_time, "seconds")
+tf.print("2.Execution time of act_sequence:", end_time - start_time, "seconds")
 #if state2==check_state:
-#  print("Equal")
+#  tf.print("Equal")
 #else:
-#  print("Not Equal")
+#  tf.print("Not Equal")
 
-print()
+tf.print()
+exit()
 
 #tensor_state.set_attr(large_container.name, 40)
 #init_state=tensor_state.convert_to_Tf()
-#print("state3", tensor_state["large_container"] )
+#tf.print("state3", tensor_state["large_container"] )
 
-#print("Tensor init", tensor_state)
+#tf.print("Tensor init", tensor_state)
 # Measure execution time of act_sequence
 
 
 initial_state["large_container"]=tf.constant(20.1)
-print("state3", initial_state["large_container"] )
+tf.print("state3", initial_state["large_container"] )
 start_time = time.time()
 
 #graphviz = GraphvizOutput()
@@ -389,20 +574,20 @@ state3=seq_plan.get_state_values() #.convert_to_Tf()
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
 
-#print("new state3 cost ", state3["cost"] )
-#print("Actions", act_list)
+#tf.print("new state3 cost ", state3["cost"] )
+#tf.print("Actions", act_list)
 
-print("3.Execution time of act_sequence:", end_time - start_time, "seconds")
+tf.print("3.Execution time of act_sequence:", end_time - start_time, "seconds")
 #if state3==check_state:
-#  print("Equal")
+#  tf.print("Equal")
 #else:
-#  print("Not Equal")
+#  tf.print("Not Equal")
 
-print()
+tf.print()
 
 
 initial_state["large_container"]=tf.constant(20.0)
-print("state3a", initial_state["large_container"] )
+tf.print("state3a", initial_state["large_container"] )
 start_time = time.time()
 plan_sequence(initial_state,seq_plan)
 state3=seq_plan.get_state_values() #.convert_to_Tf()
@@ -410,24 +595,24 @@ state3=seq_plan.get_state_values() #.convert_to_Tf()
 #state=seq_plan.forward(initial_state)
 end_time = time.time()
 
-#print("new state3", state3["large_container"] )
-#print("Actions", act_list)
+#tf.print("new state3", state3["large_container"] )
+#tf.print("Actions", act_list)
 
-#print("new state3a cost  ", state3["cost"] )
-print("3a.Execution time of act_sequence:", end_time - start_time, "seconds")
+#tf.print("new state3a cost  ", state3["cost"] )
+tf.print("3a.Execution time of act_sequence:", end_time - start_time, "seconds")
 #if state3==check_state:
-#  print("Equal")
+#  tf.print("Equal")
 #else:
-#  print("Not Equal")
+#  tf.print("Not Equal")
 
-print()
-
-
+tf.print()
 
 
-for i in range(80, -10, -5):
+
+
+for i in range(80, -10, -20):
   initial_state["large_container"]=tf.constant(i+0.1,dtype=tf.float32)
-  print("state", initial_state["large_container"] )
+  tf.print("state", initial_state["large_container"] )
   start_time = time.time()
   plan_sequence(initial_state,seq_plan)
   state3=seq_plan.get_state_values() #.convert_to_Tf()
@@ -435,17 +620,17 @@ for i in range(80, -10, -5):
   #state=seq_plan.forward(initial_state)
   end_time = time.time()
 
-  #print("new state4 cost ", state3["cost"] )
-  #print("Actions", act_list)
+  #tf.print("new state4 cost ", state3["cost"] )
+  #tf.print("Actions", act_list)
 
-  print(i,".Execution time of act_sequence:", end_time - start_time, "seconds")
+  tf.print(i,".Execution time of act_sequence:", end_time - start_time, "seconds")
 
   #if state3==check_state:
-  #  print("Equal")
+  #  tf.print("Equal")
   #else:
-  #  print("Not Equal")
+  #  tf.print("Not Equal")
 
-  print()
+  tf.print()
 
 exit()
 
@@ -463,20 +648,20 @@ with writer.as_default():
     #    raise ValueError("Only constant effects are supported in this example")
  
     #if (simulator.is_applicable(new_state, fill_large)):
-    #  print("Action applicable")
+    #  tf.print("Action applicable")
     #else:
-    #  print("Action not applicable")
+    #  tf.print("Action not applicable")
 
     #new_state = simulator.apply(new_state, fill_large)
-    #print("new state: ",new_state)   
+    #tf.print("new state: ",new_state)   
 
     #if (simulator.is_applicable(new_state, fill_large)):
-    #  print("Action applicable")
+    #  tf.print("Action applicable")
     #else:
-    #  print("Action not applicable")
+    #  tf.print("Action not applicable")
 
     #new_state = simulator.apply(new_state, fill_large)
-    #print("new state: ",new_state)   
+    #tf.print("new state: ",new_state)   
 
     #init = simulator.get_state_values()
     #print("init", init)

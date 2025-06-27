@@ -38,6 +38,7 @@ class TensorPlan(ABC):
         self.predicates_actions_sequence_list =[]
         self.variables_actions_sequence_list =[]
         self.effects_pos_actions_sequence_list=[]
+        self.index_use_action_list=[]
         
         self.state_updates = {} # The sequence of states updates after applying actions 
         self.new_action = action_type  # Choose between TfAction and TorchAction
@@ -98,21 +99,24 @@ class TensorPlan(ABC):
             if act_name in GlobalData._class_grounded_actions_map:
                 tensor_action = GlobalData._class_grounded_actions_map[act_name]
             else:
-                tensor_action = self.new_action(problem=self.problem, plan_action=act, converter=self.converter, tensor_state=tensor_state)
+                tensor_action = self.new_action(problem=self.problem, plan_action=act, converter=self.converter, tensor_state=tensor_state, is_mandatory=False)
                 GlobalData._class_grounded_actions_map[act_name] = tensor_action
 
             
             self.actions_sequence[i] = tensor_action
-            self.apply_funct_actions_sequence_list.append(tensor_action.apply_action_concrete_funct) #XXXX
-            #self.apply_funct_actions_sequence_list.append(tensor_action) # YYYYYY
+            if GlobalData.use_concrete_functions:
+                self.apply_funct_actions_sequence_list.append(tensor_action.apply_action_concrete_funct) #XXXX
+            else:   
+                self.apply_funct_actions_sequence_list.append(tensor_action) # YYYYYY
             self.apply_indx_actions_sequence_list.append(tensor_action.get_lifted_action_indx())
             self.predicates_actions_sequence_list.append(tensor_action.get_predicates_indexes())
             self.variables_actions_sequence_list.append(tensor_action.get_variables_indexes())
             self.effects_pos_actions_sequence_list.append(tensor_action.get_effects_pos())
+            self.index_use_action_list.append(tensor_action.get_variable_use_action_index())
 
-            if DEBUG>1:
+            if DEBUG>=0:
                 print("Step: ", i, " act name: ", tensor_action.get_name())
-                if DEBUG>4:
+                if DEBUG>=0:
                     print("Action: ", tensor_action) 
     
         fve = up.model.walkers.FreeVarsExtractor()
@@ -121,7 +125,7 @@ class TensorPlan(ABC):
         for goal in self.problem.goals:
                 predicates_set.update(fve.get(goal))
                 
-        self.tensor_state.insert_zero(predicates_set)
+        self.tensor_state.insert_unsupported(predicates_set)
         tensor_state.compute_keys_positions()
         for goal in self.problem.goals:
             fluent_name = goal.get_name()
@@ -137,7 +141,10 @@ class TensorPlan(ABC):
         # Ensure the problem has the correct metric defined
         if not any(isinstance(metric, up.model.metrics.MinimizeSequentialPlanLength) or (metric.is_minimize_expression_on_final_state()) for metric in problem.quality_metrics):
             raise ValueError("The problem does not have MinimizeSequentialPlanLength as a quality metric.")
-            
+        
+        if DEBUG>=0:
+            print("variables list: ", GlobalData._class_variables_list)
+            print("Predicates list: ", GlobalData._class_predicates_list)
 
 
     def forward_sequence(self, state_values):
@@ -160,9 +167,12 @@ class TensorPlan(ABC):
             # Apply the action to the current state
             if DEBUG>2:
                 tf.print("\nApply Action in ", self._applicable_actions_list.size(), " name: ", tensor_action.get_name())
-            #are_preconditions_satisfied,updates=tensor_action.apply_action(state_values) #YYYYYY
-            are_preconditions_satisfied,indexes,values=tensor_action.apply_action_concrete_funct (tensor_action.get_predicates_indexes(),state_values)#XXXXX
-            
+
+            if GlobalData.use_concrete_functions:
+                are_preconditions_satisfied,indexes,values=tensor_action.apply_action_concrete_funct (tensor_action.get_predicates_indexes(),state_values)#XXXXX
+            else:
+                are_preconditions_satisfied,updates=tensor_action.apply_action(state_values) #YYYYYY
+
             self._applicable_actions_list.append(are_preconditions_satisfied)
      
             for pos,value in updates:
@@ -174,10 +184,10 @@ class TensorPlan(ABC):
                     state_values = tf.tensor_scatter_nd_add(state_values, indices=[[pos]], updates=[value])
                     
                     if DEBUG>5:
-                        print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
+                        tf.print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
                 else:
                     if DEBUG>5:
-                        print("NUpdate: ", pos, ": ", float(value))
+                        tf.print("NUpdate: ", pos, ": ", float(value))
                 
             
         if DEBUG>-1:
@@ -185,8 +195,8 @@ class TensorPlan(ABC):
             tf.print("Check: ", valid)
 
             if DEBUG>5:
-                print(state_values)
-                print()
+                tf.print(state_values)
+                tf.print()
 
         #quality=state_values[GlobalData.pos_metric_expr]
         quality= tf.gather(state_values,GlobalData.pos_metric_expr)
@@ -203,34 +213,42 @@ class TensorPlan(ABC):
         self.state_values=state_values
         if DEBUG > 0:
             print(".forward")
-            #tf.print("Metric: ", state_values[self.tensor_state.pos_metric_expr])
+            #tf.tf.print("Metric: ", state_values[self.tensor_state.pos_metric_expr])
             if DEBUG>5:
-                print("Initial state: ", state_values)
+                tf.print("Initial state: ", state_values)
         self._applicable_actions_list=[]
 
         step=0
+        trace_valid=1
         for tensor_action in self.apply_funct_actions_sequence_list:   
             
             # Apply the action to the current state
-            #are_preconditions_satisfied,values=tensor_action(self.apply_indx_actions_sequence_list[step],self.predicates_actions_sequence_list[step] ,state_values) #YYYY
-            are_preconditions_satisfied,values=tensor_action.apply_action_concrete_funct (tensor_action.get_predicates_indexes(),state_values)#XXXXX
+
+            if GlobalData.use_concrete_functions:
+                are_preconditions_satisfied,values=tensor_action.apply_action_concrete_funct (tensor_action.get_predicates_indexes(),state_values)#XXXXX
+            else:
+                are_preconditions_satisfied,values=tensor_action(self.apply_indx_actions_sequence_list[step],self.predicates_actions_sequence_list[step] ,state_values) #YYYY
             indexes=self.effects_pos_actions_sequence_list  
             self._applicable_actions_list.append(are_preconditions_satisfied)
+            if are_preconditions_satisfied<0:
+                trace_valid=-1
+                if DEBUG>1:
+                    tf.print("Action in ", step, " is NOT applicable: ", tensor_action.get_name())
      
             for pos,value in zip(indexes.numpy(),values.numpy()):
                 if pos>=0:   
                     state_values [pos]=value
                     if DEBUG>5:
-                        print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
+                        tf.print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
                 else:
                     if DEBUG>5:
-                        print("NUpdate: ", pos, ": ", float(value))
+                        tf.print("NUpdate: ", pos, ": ", float(value))
                 
             
-        valid=self.check_goals(state_values)
+        goals_valid, metric_add=self.check_goals(state_values)
         if DEBUG>-1:
-            valid=self.get_plan_metric(state_values)
-            tf.print("Check: ", valid)
+            check_valid=self.get_plan_metric(state_values)
+            tf.print("Check, valid: ", min(trace_valid,goals_valid)>=0, " plan: ", trace_valid>=0, " goals:", goals_valid>=0, " sol: ", check_valid)
 
             #if DEBUG>5:
             #    print(state_values)
@@ -258,19 +276,15 @@ class TensorPlan(ABC):
             #value = TensorAction.evaluate_condition(goal)
            
             if value < 0:
-                if DEBUG>1:
-                    tf.print("Fluent unsatisfied indx: ", goal,", value: ",value)
-                satisfied=satisfied*0 # Needed for tf function; use a break?
+                satisfied=-1 # Needed for tf function; use a break?
                 metric_value_add +=  UNSAT_PENALTY    *  value *( -1.0 )
-
-        #state_values.scatter_nd_add(indices=[[GlobalData.pos_metric_expr]], updates=[metric_value_add]) #YYYYYYYY 
-        state_values = tf.tensor_scatter_nd_add(state_values, indices=[[GlobalData.pos_metric_expr]], updates=[metric_value_add])
-        self.state_values = state_values
+                if DEBUG>1:
+                    tf.print("Goal unsatisfied: ", GlobalData._class_conditions_list[goal].name, " indx: ", goal,", value: ",value, " -- metric add: ", metric_value_add,"\n")
+            else:
+                if DEBUG>1:
+                    tf.print("Goal Satisfied: ", GlobalData._class_conditions_list[goal].name, " indx: ", goal,", value: ",value, " -- metric add: ", metric_value_add,"\n")
         
-        #update_slices = tf.IndexedSlices([metric_value_add], [[GlobalData.pos_metric_expr]])
-        #state_values.assign_add(tf.scatter_nd(update_slices.indices, update_slices.values, state_values.shape))    
-        
-        return satisfied
+        return satisfied, metric_value_add
     
 
     def get_plan_metric(self, state_values):
@@ -330,6 +344,78 @@ class TfPlan(TensorPlan):
         """
         super().__init__(problem, tensor_state, plan, action_type=up.tensor.TfAction)
 
+
+
+
+    #Apply in parallel the actions in the plan
+    #@tf.function
+    def forward_step(self, state_values, variables_values):
+        """
+        Executes a sequence of actions on the given state.
+
+        :param my_state: The initial state before applying the actions.
+        :return: The resulting state after all actions have been applied.
+        """
+        self.state_values=state_values
+        GlobalData._class_tensor_state=self.tensor_state 
+        #if DEBUG > 0:
+        #    print(".forward")
+        #    tf.print("Metric: ", state_values[self.tensor_state.pos_metric_expr])
+        #    if DEBUG>5:
+        #        print("Initial state: ", state_values)
+        self._applicable_actions_list=[]
+        max_size=len(self.apply_funct_actions_sequence_list)
+        trace_valid=1
+        are_preconditions_satisfied=list()
+        values=list()
+        for step in range(max_size):    
+            
+            # Apply the action to the current state
+            predicates_indexes=self.predicates_actions_sequence_list[step]
+            variables_indexes=self.variables_actions_sequence_list[step]
+            apply_action=self.apply_funct_actions_sequence_list[step]
+            indexes=self.effects_pos_actions_sequence_list[step]
+            use_action_index=self.index_use_action_list[step]
+            #are_preconditions_satisfied,state_update=tensor_action.apply_action(state_values)
+            #are_preconditions_satisfied,values=TfLiftedAction.apply_TfLiftedAction_liftedData(self.apply_indx_actions_sequence_list[step], predicates_indexes ,state_values) 
+            #are_preconditions_satisfied,values=TfLiftedAction.apply_TfLiftedAction(self.apply_indx_actions_sequence_list[step], predicates_indexes ,state_values) 
+            
+            if GlobalData.use_concrete_functions: # XXXXX
+                are_preconditions_satisfied_val,values_val=apply_action(predicates_indexes,state_values, variables_indexes,variables_values,use_action_index) #XXXX
+            else:
+                are_preconditions_satisfied_val,values_val=apply_action.apply_action_funct (predicates_indexes,state_values, variables_indexes,variables_values, use_action_index)# YYYYY
+            self._applicable_actions_list.append(are_preconditions_satisfied_val)
+            are_preconditions_satisfied.append(are_preconditions_satisfied_val)
+            values.append(values_val)
+            if are_preconditions_satisfied_val<0:
+                if DEBUG>1:
+                    tf.print("Action in ", step, " is NOT applicable: ", self.actions_sequence[step].get_name())
+
+
+        #Apply effects
+        for step in range(max_size):    
+            indexes=self.effects_pos_actions_sequence_list[step]
+            if tf.shape(indexes)[0] > 0:  # Apply updates in batch, we update here the state_values tensor and not in apply_action in order to use input_shape in tf.function
+                #state_values.scatter_nd_add(indices=indexes, updates=values[step]) #RRRRR
+                state_values = tf.tensor_scatter_nd_add(state_values, indices=indexes, updates=values[step])
+                
+            if DEBUG>2:
+                tf.print("\nApply Action in ", step, " name: ", self.actions_sequence[step].get_name(), " act: ",self.actions_sequence[step])
+                #tf.print("Updates:",indexes, " --- ", values)
+                for(indx, val) in zip(indexes,values[step]):
+                    if indx>=0:
+                        tf.print("Update: ", self.tensor_state.get_key(int(indx)), ": ", float(val), "new: ", float(state_values[int(indx)]))
+                    else:
+                        tf.print("NUpdate: ", indx, ": ", float(val))
+                tf.print("State metric: ", state_values[GlobalData.pos_metric_expr])
+                tf.print("L container: ", state_values[self.tensor_state.get_key_position("large_container")], " small: ", state_values[self.tensor_state.get_key_position("small_container")])
+                tf.print("Are prec satisfied: ", are_preconditions_satisfied[step],"\n")
+            
+        return tf.gather(state_values,GlobalData.pos_metric_expr), tf.gather(state_values,GlobalData.pos_are_prec_sat),state_values 
+    
+
+
+    #Apply sequentially the actions in the plan
     #@tf.function
     def forward(self, state_values, variables_values):
         """
@@ -339,6 +425,7 @@ class TfPlan(TensorPlan):
         :return: The resulting state after all actions have been applied.
         """
         self.state_values=state_values
+        GlobalData._class_tensor_state=self.tensor_state 
         #if DEBUG > 0:
         #    print(".forward")
         #    tf.print("Metric: ", state_values[self.tensor_state.pos_metric_expr])
@@ -346,6 +433,7 @@ class TfPlan(TensorPlan):
         #        print("Initial state: ", state_values)
         self._applicable_actions_list=[]
         max_size=len(self.apply_funct_actions_sequence_list)
+        trace_valid=1
         for step in range(max_size):    
             
             # Apply the action to the current state
@@ -353,14 +441,20 @@ class TfPlan(TensorPlan):
             variables_indexes=self.variables_actions_sequence_list[step]
             apply_action=self.apply_funct_actions_sequence_list[step]
             indexes=self.effects_pos_actions_sequence_list[step]
+            use_action_index=self.index_use_action_list[step]
             #are_preconditions_satisfied,state_update=tensor_action.apply_action(state_values)
             #are_preconditions_satisfied,values=TfLiftedAction.apply_TfLiftedAction_liftedData(self.apply_indx_actions_sequence_list[step], predicates_indexes ,state_values) 
             #are_preconditions_satisfied,values=TfLiftedAction.apply_TfLiftedAction(self.apply_indx_actions_sequence_list[step], predicates_indexes ,state_values) 
-            #are_preconditions_satisfied,values=apply_action.apply_action_funct (predicates_indexes,state_values, variables_indexes,variables_values)# YYYYY
-            are_preconditions_satisfied,values=apply_action(predicates_indexes,state_values, variables_indexes,variables_values) #XXXX
-
+            
+            if GlobalData.use_concrete_functions: # XXXXX
+                are_preconditions_satisfied,values=apply_action(predicates_indexes,state_values, variables_indexes,variables_values,use_action_index) #XXXX
+            else:
+                are_preconditions_satisfied,values=apply_action.apply_action_funct (predicates_indexes,state_values, variables_indexes,variables_values,use_action_index)# YYYYY
             self._applicable_actions_list.append(are_preconditions_satisfied)
-     
+            if are_preconditions_satisfied<0:
+                trace_valid=-1
+                if DEBUG>1:
+                    tf.print("Action in ", step, " is NOT applicable: ", self.actions_sequence[step].get_name())
             if tf.shape(indexes)[0] > 0:  # Apply updates in batch, we update here the state_values tensor and not in apply_action in order to use input_shape in tf.function
                 #state_values.scatter_nd_add(indices=indexes, updates=values) #RRRRR
                 state_values = tf.tensor_scatter_nd_add(state_values, indices=indexes, updates=values)
@@ -369,10 +463,15 @@ class TfPlan(TensorPlan):
                 
             if DEBUG>2:
                 tf.print("\nApply Action in ", step, " name: ", self.actions_sequence[step].get_name(), " act: ",self.actions_sequence[step])
-                tf.print("Updates:",indexes, " --- ", values)
+                #tf.print("Updates:",indexes, " --- ", values)
+                for(indx, val) in zip(indexes,values):
+                    if indx>=0:
+                        tf.print("Update: ", self.tensor_state.get_key(int(indx)), ", increment: ", float(val), ", state: ", float(state_values[int(indx)]))
+                    else:
+                        tf.print("NUpdate: ", indx, ": ", float(val))
                 tf.print("State metric: ", state_values[GlobalData.pos_metric_expr])
                 tf.print("L container: ", state_values[self.tensor_state.get_key_position("large_container")], " small: ", state_values[self.tensor_state.get_key_position("small_container")])
-                tf.print("Are prec satisfied: ", are_preconditions_satisfied)
+                tf.print("Are prec satisfied: ", are_preconditions_satisfied,"\n")
             
             #for pos,value in zip(indexes,values):
             #    if pos>=0:   
@@ -383,16 +482,24 @@ class TfPlan(TensorPlan):
             #        tf.print("NUpdate: ", pos, ": ", float(value))
                 
             
-        goals_valid=self.check_goals(state_values, variables_values)
+        goals_valid,metric_value_add=self.check_goals(state_values, variables_values)
+        if goals_valid<=0:
+            #state_values.scatter_nd_add(indices=[[GlobalData.pos_metric_expr]], updates=[metric_value_add]) #ZZZZZ
+            state_values = tf.tensor_scatter_nd_add(state_values, indices=[[GlobalData.pos_metric_expr]], updates=[metric_value_add])
+        
+            #update_slices = tf.IndexedSlices([metric_value_add], [[GlobalData.pos_metric_expr]])
+            #state_values.assign_add(tf.scatter_nd(update_slices.indices, update_slices.values, state_values.shape))   
+            
         if DEBUG>1:
             check_valid=self.get_plan_metric(state_values)
-            tf.print("Check: ", check_valid)
 
-            if DEBUG>5:
+            tf.print("Check, valid: ", min(trace_valid,goals_valid)>=0, " plan: ", trace_valid>=0, " goals:", goals_valid>=0, " sol: ", check_valid)
+            if DEBUG>7:
                 print(state_values)
                 print()
         prec_satified= (max_size==state_values[GlobalData.pos_are_prec_sat]) #tf.cond(max_size==state_values[GlobalData.pos_are_prec_sat], lambda: TF_SAT, lambda: TF_UN_SAT)
-        return tf.gather(state_values,GlobalData.pos_metric_expr), tf.gather(state_values,GlobalData.pos_are_prec_sat),prec_satified,goals_valid
+        return tf.gather(state_values,GlobalData.pos_metric_expr), tf.gather(state_values,GlobalData.pos_are_prec_sat),prec_satified,goals_valid,state_values 
     
     def generate_variables_values(self):
         return tf.Variable( tf.zeros(shape=(len(GlobalData._class_variables_list),)), dtype=tf.float32,trainable=True) # [tf.Variable(0, dtype=tf.float32,trainable=True) for _ in range(len(GlobalData._class_variables_list))])
+        #return tf.Variable(tf.fill([len(GlobalData._class_variables_list)], -1.0), dtype=tf.float32, trainable=True)  # Initialize with -1 instead of zeros

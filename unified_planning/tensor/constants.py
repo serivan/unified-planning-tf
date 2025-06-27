@@ -6,8 +6,9 @@ import inspect
 from tensorflow.lookup.experimental import DenseHashTable
 
 # Activate debug mode
-DEBUG = 0
+DEBUG = 6
 
+UNSAT_PENALTY=tf.constant(1000.0, dtype=tf.float32)
 DEVICE='/CPU:0'
 # Define constants
 EPSILON=1e-7  #tf.keras.backend.epsilon()
@@ -35,7 +36,6 @@ EMPTY_KEY = "__EMPTY__"
 DELETED_KEY = "__DELETED__"
 
 
-UNSAT_PENALTY=tf.constant(50000.0, dtype=tf.float32)
 def grep( string, pattern):
     """
     Mimic the behavior of the grep command on a Python string.
@@ -55,7 +55,7 @@ def grep( string, pattern):
 
  
 @tf.custom_gradient
-def tf_differentiable_heaviside(x):
+def d_heaviside(x):
     """ Heaviside step function with a smooth gradient. """
     y = tf.where(x >= 0, 1.0, 0.0)  # Standard Heaviside function
 
@@ -91,10 +91,12 @@ class GlobalData():
     _class_effects_map={} # position of the effect in _effects_list
 
     _class_variables_list=[]  # List to store the variables
+    _class_tensor_state = None # Tensor to store the state of the variables
     
     apply_action_fn_list=list() # List to store the apply action lamba functions
     tensor_state=None
     metric_pos=-1
+    use_concrete_functions=False #True 
 
     def _insert_in_map(keys, table_kv, list_vk, value=None):
         assigned_values = []  # List to store the incremented values

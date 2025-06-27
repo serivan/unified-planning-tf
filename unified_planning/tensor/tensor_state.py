@@ -44,8 +44,16 @@ class TensorState(ABC):
         if initialize==True:
             self._initialize_state()   
 
+    def size(self):
+        """
+        Returns the length of the state.
 
-    def insert_zero(self, keys):
+        :return: Length of the state.
+        """
+        return len(self._state)
+    
+
+    def insert_unsupported(self, keys):
 
         pos=len(self._state)
         count=0
@@ -54,7 +62,7 @@ class TensorState(ABC):
             if k_str in self._state:
                 continue
 
-            fluent=self._create_fluent(k, 0.0, False)
+            fluent=self._create_fluent(k, -1.0, False)
             self._state[k_str] = fluent
             if k_str not in self._keys_positions:
                 self._keys_positions[k_str]=pos
@@ -116,8 +124,8 @@ class TensorState(ABC):
         To be overridden in subclasses if needed.
         """
         for fluent, value in self.problem.initial_values.items():
-            #print("Fluent:", fluent)
-            #print("Initial value:", value)
+            #tf.print("Fluent:", fluent)
+            #tf.print("Initial value:", value)
             fluent_name=fluent.get_name()
             if fluent_name == self.str_metric_expr:
                 trainable=True
@@ -155,7 +163,7 @@ class TensorState(ABC):
         Prints the current state for debugging purposes.
         """
         for fluent, variable in self._state.items():
-            print(f"{fluent}: {variable}")
+            tf.print(f"{fluent}: {variable}")
 
 
     def copy(self):
@@ -332,7 +340,7 @@ class TensorState(ABC):
                 else:
                     print_val=value
                 
-                print(key,": ", value, end=" -- ")
+                tf.print(key,": ", value, end=" -- ")
 
 class TfState(TensorState): #, tf.experimental.ExtensionType):
     def __init__(self, problem, intialize=True):

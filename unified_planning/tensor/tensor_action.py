@@ -63,8 +63,9 @@ class LiftedActionData:
 
 class PreconditionData: 
     """Data structure to store all relevant information about a precondition."""
-    def __init__(self, prec, position, name, sympy_expr, sympy_function, predicates_keys, predicates_indexes, variables_keys):
+    def __init__(self, prec, lifted_prec, position, name, sympy_expr, sympy_function, predicates_keys, predicates_indexes, variables_keys):
         self.prec = prec
+        self.lifted_prec=lifted_prec
         self.position = position
         self.name = name
         self.sympy_expr = sympy_expr
@@ -156,46 +157,51 @@ class TensorAction(ABC):
         Store a precondition in the class list and map if it does not already exist.
         """
 
-        if prec in GlobalData._class_conditions_map:
-            cond_position = GlobalData._class_conditions_map[prec]
-            if DEBUG > 5:
-                print(f"Precondition {prec} already exists at position {cond_position}")
-        else:
-            fl_name = prec.get_name()
-            prec_str= converter.get_condition_str(prec)
-            fve = up.model.walkers.FreeVarsExtractor()
-            predicates_set= fve.get(prec)
+
+        fl_name = prec.get_name()
+        prec_str= converter.get_condition_str(prec)
+        fve = up.model.walkers.FreeVarsExtractor()
+        predicates_set= fve.get(prec)
           
-            predicates_indexes=state_predicates_indexes=tf.constant([converter.tensor_state.get_key_position(str(pred)) for pred in predicates_set])
-            #sorted(predicates_set, key=len, reverse=True)
-            if predicates_list is None:                  
-                predicates_list=list(predicates_set)
-            else:
-                pred_indexes=GlobalData.get_values_from_predicates_list(predicates_list)
-                predicates_indexes=tf.constant([t.numpy() for t in pred_indexes], dtype=tf.int32)
-                #variables_indexes=tf.constant([i  for i,val in enumerate(variables_list)], dtype=tf.int32)
+        predicates_indexes=state_predicates_indexes=tf.constant([converter.tensor_state.get_key_position(str(pred)) for pred in predicates_set])
+        #sorted(predicates_set, key=len, reverse=True)
+        if predicates_list is None:                  
+            predicates_list=list(predicates_set)
+        else:
+            pred_indexes=GlobalData.get_values_from_predicates_list(predicates_list)
+            predicates_indexes=tf.constant([t.numpy() for t in pred_indexes], dtype=tf.int32)
+            #variables_indexes=tf.constant([i  for i,val in enumerate(variables_list)], dtype=tf.int32)
 
-            lifted_prec_str=GlobalData.get_lifted_string(prec_str,predicates_list,variables_list)
+        lifted_prec_str=GlobalData.get_lifted_string(prec_str,predicates_list,variables_list)
 
-            sympy_expr =  converter.define_condition_expr(lifted_prec_str) 
-            sympy_function=SympyToTfConverter.sympy_to_tensor_function(sympy_expr)
-            cond_position = len(GlobalData._class_conditions_list)
-            # Create a PreconditionData object
-            prec_data = PreconditionData(
-                prec=prec,
-                position=cond_position,
-                name=fl_name,
-                sympy_expr=sympy_expr,
-                sympy_function=sympy_function,
-                predicates_keys=predicates_list,
-                predicates_indexes=predicates_indexes,
-                variables_keys=variables_list,
-            )
-            # Store in list and map
-            GlobalData._class_conditions_list.insert(cond_position, prec_data)
-            GlobalData._class_conditions_map[prec] = cond_position
-            if DEBUG > 5:
-                print(f"Added new precondition: {prec_data}")
+        #if lifted_prec_str in GlobalData._class_conditions_map: #Check for indexes issues
+        #    cond_position = GlobalData._class_conditions_map[lifted_prec_str]
+        #    if DEBUG > 5:
+        #        tf.print(f"Precondition {prec} already exists at position {cond_position}")
+        #else:
+
+        sympy_expr =  converter.define_condition_expr(lifted_prec_str) 
+        sympy_function=SympyToTfConverter.sympy_to_tensor_function(sympy_expr)
+        cond_position = len(GlobalData._class_conditions_list)
+        # Create a PreconditionData object
+        prec_data = PreconditionData(
+            prec=prec,
+            lifted_prec=lifted_prec_str,
+            position=cond_position,
+            name=fl_name,
+            sympy_expr=sympy_expr,
+            sympy_function=sympy_function,
+            predicates_keys=predicates_list,
+            predicates_indexes=predicates_indexes,
+            variables_keys=variables_list,
+        )
+        # Store in list and map
+        GlobalData._class_conditions_list.insert(cond_position, prec_data)
+        GlobalData._class_conditions_map[lifted_prec_str] = cond_position
+        if DEBUG > 5:
+            tf.print(f"Added new precondition: {prec_data}")
+        # end else
+
         return cond_position
     
 
@@ -269,16 +275,16 @@ class TensorAction(ABC):
 
         if DEBUG>0:
             if self._are_preconditions_satisfied<0:    
-                print("Preconditions not satisfied, action id: ", self._action_id, " name: ", self.get_name())
+                tf.print("Preconditions not satisfied, action id: ", self._action_id, " name: ", self.get_name())
             else:
-                print("Preconditions satisfied, action id: ", self._action_id, " name: ", self.get_name())
+                tf.print("Preconditions satisfied, action id: ", self._action_id, " name: ", self.get_name())
             
-            print()
+            tf.print()
 
             if DEBUG>1:
-                print("Update after action:", end=":: ")
+                tf.print("Update after action:", end=":: ")
                 #TensorState.print_filtered_dict_state(state_update,["next"])
-                print(state_update)
+                tf.print(state_update)
 
         return  self._are_preconditions_satisfied, state_update
     
@@ -296,13 +302,13 @@ class TensorAction(ABC):
         fluent_indx=predicates_indexes[effect_data.effect_predicates_position]
 
         if(DEBUG>2):
-            print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
+            tf.print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
 
             fluent_name =GlobalData._class_tensor_state.get_key(fluent_indx)
-            print("..compute_effect_value: ", fluent_name, " - indx: ", fluent_indx)
+            tf.print("..compute_effect_value: ", fluent_name, " - indx: ", fluent_indx)
         
             if DEBUG>4:
-                print("Effect:", effect_data.effect, " fl_name: ", fluent_name)
+                tf.print("Effect:", effect_data.effect, " fl_name: ", fluent_name)
 
         are_prec_satisfied=1.0 #self._are_preconditions_satisfied
         sympy_function=effect_data.sympy_sat_function        
@@ -314,8 +320,8 @@ class TensorAction(ABC):
 
         if DEBUG>2:
             value=float(state_values[fluent_name])
-            print("..compute_effect_value: ", fluent_name, " - indx: ", effect_indx)
-            print("-->",fluent_name,"- init:",value, " delta:", result-value, " new: ", result)
+            tf.print("..compute_effect_value: ", fluent_name, " - indx: ", effect_indx)
+            tf.print("-->",fluent_name,"- init:",value, " delta:", result-value, " new: ", result)
 
             if(DEBUG>5):
                 print("Result: ", result)
@@ -333,18 +339,18 @@ class TensorAction(ABC):
             curr_state (dict): The initial state.
         """
         if DEBUG>5: #
-            print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
+            tf.print("...Apply single effect: ", effect_indx, " predicates: ", predicates_indexes)
         effect_data = GlobalData._class_effects_list[effect_indx]
         #fl_name=GlobalData._class_predicates_list_string[ predicates_indexes[effect_data.effect_predicates_position]]
         fluent_indx=predicates_indexes[effect_data.effect_predicates_position]
         #fluent_name = GlobalData.get_key_from_indx_predicates_list( fluent_indx)
 
         if DEBUG>4:
-            print("Effect:", effect_data.effect, " fl_name: ", fluent_name)
+            tf.print("Effect:", effect_data.effect, " fl_name: ", fluent_name)
         result=0.0
 
         if(DEBUG>2):
-            print("..compute_effect_value: ", fluent_name, " - indx: ", fluent_indx)
+            tf.print("..compute_effect_value: ", fluent_name, " - indx: ", fluent_indx)
         
         are_prec_satisfied=1.0 #self._are_preconditions_satisfied
         sympy_expr = effect_data.sympy_sat
@@ -361,8 +367,8 @@ class TensorAction(ABC):
 
         if DEBUG>2:
             value=float(state_values[fluent_name])
-            print("..compute_effect_value: ", fluent_name, " - indx: ", effect_indx)
-            print("-->",fluent_name,"- init:",value, " delta:", result-value, " new: ", result)
+            tf.print("..compute_effect_value: ", fluent_name, " - indx: ", effect_indx)
+            tf.print("-->",fluent_name,"- init:",value, " delta:", result-value, " new: ", result)
 
         return (fluent_indx, result)
 
@@ -428,7 +434,7 @@ class TfLiftedAction (TensorAction):
    
         else:
             if DEBUG>2:
-                print("Create TfLiftedAction:", self._action.name, " id:", self._action_id)
+                tf.print("Create TfLiftedAction:", self._action.name, " id:", self._action_id)
             
             fve = up.model.walkers.FreeVarsExtractor()
             predicates_set= set()
@@ -441,7 +447,7 @@ class TfLiftedAction (TensorAction):
                     predicates_set.update(fve.get(effect.condition))
             self._predicates_list=list(predicates_set) #Lifted predicate set
             self._predicates_indexes=GlobalData.insert_predicates_in_map(predicates_set)
-            self.tensor_state.insert_zero(predicates_set)
+            self.tensor_state.insert_unsupported(predicates_set)
 
             variables_set= set()
             if not is_mandatory:
@@ -468,7 +474,7 @@ class TfLiftedAction (TensorAction):
                 effect_pos_list.append(pos)
                 funct_list.append(funct)
                 if DEBUG>5:
-                    print("Effect:", effect_data.effect, " fl_name: ", effect_data.name)
+                    tf.print("Effect:", effect_data.effect, " fl_name: ", effect_data.name)
             
             self._act_effects_lifted_pos_list=effect_pos_list
             liftedData=LiftedActionData(self._lifted_action, 
@@ -490,10 +496,11 @@ class TfLiftedAction (TensorAction):
             #   (lambda f=f: f(predicates_indexes, state_values))
             #    for f in funct_list 
             #]
-            # XXXXX
-            concrete_funct=self.apply_action_funct.get_concrete_function(tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32),tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32))
-            liftedData.set_concrete_funct(concrete_funct)
-            self.apply_action_concrete_funct=concrete_funct 
+            
+            if GlobalData.use_concrete_functions: # XXXXX
+                concrete_funct=self.apply_action_funct.get_concrete_function(tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32),tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32))
+                liftedData.set_concrete_funct(concrete_funct)
+                self.apply_action_concrete_funct=concrete_funct 
             
 
     def _build_preconditions_effects(self):
@@ -508,7 +515,7 @@ class TfLiftedAction (TensorAction):
         preconditions = self._action.preconditions
         for prec in preconditions:
             if DEBUG>5:
-                print("Define precondition:", prec)
+                tf.print("Define precondition:", prec)
             cond_position = self.store_condition(prec)
             # Store the precondition position to build the action's preconditions_list
             self._act_preconditions_list.append(cond_position)
@@ -545,13 +552,14 @@ class TfLiftedAction (TensorAction):
         """
         converter= self.converter           
         if DEBUG>5:
-            print("Define effect:", effect)
+            tf.print("Define effect:", effect)
 
-        if effect in GlobalData._class_effects_map:
+        # CHECK if search in map is necessarily??? (avoid it???)  Possible problems with __LIFT__  
+        if effect in GlobalData._class_effects_map and False:
 
             ef_position = GlobalData._class_effects_map[effect]
             if DEBUG > 5:
-                print(f"Effect {effect} already exists at position {ef_position}")
+                tf.print(f"Effect {effect} already exists at position {ef_position}")
         else:
             fl_name = effect.fluent.get_name()  # Assuming fluent() provides the name
             ef_str= str(effect.value)
@@ -590,7 +598,7 @@ class TfLiftedAction (TensorAction):
             GlobalData._class_effects_list.append(effect_data)
             GlobalData._class_effects_map[effect] = ef_position
             if DEBUG > 5:
-                print(f"Added new effect: {effect_data}")
+                tf.print(f"Added new effect: {effect_data}")
             
         return ef_position
 
@@ -606,7 +614,7 @@ class TfLiftedAction (TensorAction):
         Returns:
             cost (Tensor): The cost calculated by applying the action's effects, or an invalid state if preconditions are not met.
         """
-        #print("Apply lifted action: ", act_index)
+        #tf.print("Apply lifted action: ", act_index)
         # Evaluate preconditions
         liftedData = GlobalData._class_liftedData_list[act_index]
         are_preconditions_satisfied = liftedData.act_preconditions_function(predicates_indexes, state_values, variables_indexes, variables_values)
@@ -619,7 +627,7 @@ class TfLiftedAction (TensorAction):
         for effect_indx in liftedData.act_effects_list:
             effect_data=GlobalData._class_effects_list[effect_indx]
             if DEBUG>5:
-                print("Applying effect:", effect_data.effect)
+                tf.print("Applying effect:", effect_data.effect)
             result=TF_SAT
                           
             pos=predicates_indexes[effect_data.effect_predicates_position]
@@ -627,7 +635,7 @@ class TfLiftedAction (TensorAction):
             if tf.greater_equal(effect_data.condition,TF_INT_ZERO):    
                 result= GlobalData._class_conditions_list[effect_data.condition].sympy_function(predicates_indexes,state_values, variables_indexes, variables_values)
                 #if DEBUG>4:
-                #    print("Condition result:", result)
+                #    tf.print("Condition result:", result)
                 #Needed in this position (not after if) for avoid tf.function out of scope error 
                 if tf.less(result,TF_ZERO):
                     value=TF_ZERO
@@ -648,10 +656,10 @@ class TfLiftedAction (TensorAction):
 
         if DEBUG>0:
             if are_preconditions_satisfied<0:    
-                print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
+                tf.print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
             else:
-                print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
-            print()
+                tf.print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
+            tf.print()
 
         indexes=tf.reshape(tf.stack(indexes), (-1, 1))
         values=tf.stack(values)
@@ -671,6 +679,7 @@ class TfLiftedAction (TensorAction):
         state_values: tf.TensorSpec(shape=(), dtype=tf.float32),
         variables_indexes: tf.TensorSpec(shape=(), dtype=tf.int32),
         variables_values: tf.TensorSpec(shape=(), dtype=tf.float32),
+        use_action_index: tf.TensorSpec(shape=(), dtype=tf.int32),
     ):
         """
         Apply an action to the state if the preconditions are met, and manage the effects.
@@ -684,26 +693,42 @@ class TfLiftedAction (TensorAction):
             are_preconditions_satisfied (Tensor): Whether preconditions are met.
             return_values (Tensor): The calculated effect values.
         """
-
-        print("Apply lifted action:", act_index)
+        if DEBUG > 1:
+            tf.print("\n++++++++++++++++++++++++++++++++++\n Apply lifted action:", act_index)
         lifted_effects_funct = GlobalData._class_lifted_effects_funct_list[act_index]
         act_preconditions_function = GlobalData._class_act_preconditions_function_list[act_index]
 
         # Evaluate preconditions
         are_preconditions_satisfied = act_preconditions_function(predicates_indexes, state_values, variables_indexes, variables_values)
-        
+        use_action=1
+        use_action_value = 0.0  # Default value for use_action
+
         # Compute effects using list comprehension
         values_list = [effect_funct(predicates_indexes, state_values, variables_indexes, variables_values) for effect_funct in lifted_effects_funct]
-        
+
+        if use_action_index >=0:
+            use_action_value = variables_values[use_action_index]
+            
+            use_action=d_heaviside(use_action_value) 
+            if DEBUG > 3:
+                tf.print("Use action:: index:", use_action_index, " value:", use_action_value, " use_action:", use_action)
+  
+            values_list=[tf.multiply(tensor, use_action) for tensor in values_list]
+
+
         # Compute metric value update
-        metric_value_add =  UNSAT_PENALTY * (-1.0) * are_preconditions_satisfied
-        satisfied = are_preconditions_satisfied >= TF_ZERO
+        metric_value_add =  UNSAT_PENALTY * (-1.0) * are_preconditions_satisfied  #* use_action
+        satisfied = tf.greater_equal(are_preconditions_satisfied, TF_ZERO) or tf.less(use_action_value, TF_ZERO)
         metric_value_add = tf.cond(satisfied, lambda: TF_ZERO, lambda: metric_value_add)
         
-        # Append metric value update and satisfaction flag
+        # Append metric value update and satisfaction flag; metric index and unsatisfied index are addet to the index array used in forward pass to update state_values
         values_list.append(metric_value_add)
         values_list.append(tf.cast(satisfied, dtype=tf.float32))
         
+        if DEBUG > 3:
+            tf.print("Action index:", act_index)
+            tf.print("Preconditions satisfied:", are_preconditions_satisfied)
+            tf.print("Metric value add:", metric_value_add)
         return_values = tf.stack(values_list)
         return are_preconditions_satisfied, return_values
 
@@ -721,7 +746,7 @@ class TfLiftedAction (TensorAction):
             cost (Tensor): The cost calculated by applying the action's effects, or an invalid state if preconditions are not met.
         """
 
-        print("Apply lifted action: ", act_index)
+        tf.print("Apply lifted action: ", act_index)
         
         #liftedData = GlobalData._class_liftedData_list[act_index]  
         #lifted_effects_pos=GlobalData._class_lifted_effects_pos_list[act_index]
@@ -760,10 +785,10 @@ class TfLiftedAction (TensorAction):
         
         #if DEBUG>0:
         #    if are_preconditions_satisfied<0:    
-        #        print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
+        #        tf.print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
         #    else:
-        #        print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
-        #    print()
+        #        tf.print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
+        #    tf.print()
 
         #return_indexes=tf.reshape(indexes.stack(), (-1, 1))
         return_values=values.stack()
@@ -783,7 +808,7 @@ class TfLiftedAction (TensorAction):
             cost (Tensor): The cost calculated by applying the action's effects, or an invalid state if preconditions are not met.
         """
 
-        print("Apply lifted action: ", act_index)
+        tf.print("Apply lifted action: ", act_index)
         
         liftedData = GlobalData._class_liftedData_list[act_index]  
         #lifted_effects_pos=GlobalData._class_lifted_effects_pos_list[act_index]
@@ -824,10 +849,10 @@ class TfLiftedAction (TensorAction):
         values=values.write(step, tf.cast(satisfied, dtype=tf.float32)) 
         #if DEBUG>0:
         #    if are_preconditions_satisfied<0:    
-        #        print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
+        #        tf.print("Preconditions not satisfied, action id: ", liftedData._lifted_action_indx)
         #    else:
-        #        print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
-        #    print()
+        #        tf.print("Preconditions satisfied, action id: ", liftedData._lifted_action_indx)
+        #    tf.print()
 
         return_indexes=tf.reshape(indexes.stack(), (-1, 1))
         return_values=values.stack()
@@ -838,9 +863,11 @@ class TfLiftedAction (TensorAction):
     
     # Wrap the conversion into a tf.function
     def apply_TfLiftedAction_function(act_indx):
-        @tf.function(input_signature=[tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32)]) #XXXXXX
-        def apply_funct(predicates_indexes, state_values, variables_indexes, variables_values):
-            return TfLiftedAction.apply_TfLiftedAction( act_indx, predicates_indexes,state_values, variables_indexes, variables_values)
+        #@tf.function(input_signature=[tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32)]) #XXXXXX
+        def apply_funct(predicates_indexes, state_values, variables_indexes, variables_values,use_action_index=-1):
+            if not GlobalData.use_concrete_functions:
+                tf.print("Please Comment tf.function")
+            return TfLiftedAction.apply_TfLiftedAction( act_indx, predicates_indexes,state_values, variables_indexes, variables_values,use_action_index)
             
         return apply_funct
         
@@ -855,7 +882,7 @@ class TfLiftedAction (TensorAction):
         """
         
         if DEBUG>5:
-            print("Evaluate preconditions, act: ", self.get_name(), " id:", self._action_id)
+            tf.print("Evaluate preconditions, act: ", self.get_name(), " id:", self._action_id)
 
             
         preconditions = self._act_preconditions_list
@@ -863,7 +890,7 @@ class TfLiftedAction (TensorAction):
 
         for prec in preconditions:
             if DEBUG>2:            
-                print("Evaluating precondition:", prec)
+                tf.print("Evaluating precondition:", prec)
             #value = self._evaluate_condition(prec, predicates_indexes, state_values)
             value = TensorAction.evaluate_condition(prec, predicates_indexes, state_values)
             result = tf.minimum(value, 0.0) # 0.0 if the precondition is satisfied, negative otherwise
@@ -872,9 +899,9 @@ class TfLiftedAction (TensorAction):
             if DEBUG>0:
                 if result >= 0:
                     if DEBUG>2:
-                        print("Precondition satisfied: ", prec)
+                        tf.print("Precondition satisfied: ", prec)
                 else:
-                    print("Precondition not satisfied: ", GlobalData._class_conditions_list[prec]," indx:", prec ," value: ", value, " act: ", self.get_name(), " id:", self.get_action_id())
+                    tf.print("Precondition not satisfied: ", GlobalData._class_conditions_list[prec]," indx:", prec ," value: ", value, " act: ", self.get_name(), " id:", self.get_action_id())
 
         # Check if all preconditions are satisfied
         return satisfied
@@ -889,13 +916,13 @@ class TfLiftedAction (TensorAction):
         """
        
         if DEBUG>5: #
-            print("\nApply effects, act: ", self.get_name(), " id:", self.get_action_id()," predicates: ", predicates_indexes)
+            tf.print("\nApply effects, act: ", self.get_name(), " id:", self.get_action_id()," predicates: ", predicates_indexes)
         effects = self._act_effects_lifted_list
         out_result=list()
         for effect_indx in effects:
             effect_data=GlobalData._class_effects_list[effect_indx]
             if DEBUG>5:
-                print("Applying effect:", effect_data.effect)
+                tf.print("Applying effect:", effect_data.effect)
             result=1.0
             if effect_data.condition>=0:
                 #result = self._evaluate_condition(effect_data.condition, predicates_indexes, state_values) 
@@ -954,7 +981,7 @@ class TfAction(TfLiftedAction):
         self._action = grounded_action # Store the action
  
         if DEBUG>1:
-            print("TfAction ID:", self._action_id)
+            tf.print("TfAction ID:", self._action_id)
         
         # Create a lifted action if not already created
         self._lifted_act_subs: Dict[up.model.Expression, up.model.Expression] = dict(
@@ -968,7 +995,7 @@ class TfAction(TfLiftedAction):
         keys=list()
         for pred in lifted_predicates_set:
             if pred.node_type != OperatorKind.FLUENT_EXP :
-                print("Error: Not a fluent expression: ", pred)
+                tf.print("Error: Not a fluent expression: ", pred)
                 continue
             new_pred = pred.substitute(self._lifted_act_subs)
             pred_matchings.update({str(pred): str(new_pred)})
@@ -983,7 +1010,7 @@ class TfAction(TfLiftedAction):
                 indx=indexes[0]
             predicates_id_list.append(indx)
 
-        self.tensor_state.insert_zero(keys) 
+        self.tensor_state.insert_unsupported(keys) 
         self._pred_matchings_lifted_data = pred_matchings_lifted_data
         self._pred_matchings = pred_matchings
         self._up_act_free_vars = lifted_predicates_set
@@ -991,14 +1018,17 @@ class TfAction(TfLiftedAction):
         self._predicates_list = predicates_list   
         self._predicates_indexes = tf.constant([t.numpy() for t in predicates_id_list], dtype=tf.int32)
         self._state_predicates_indexes=tf.constant([self.tensor_state.get_key_position(str(pred)) for pred in predicates_list])
-    
+        self._apply_act_variable_pos=-1    
 
         variables_indexes=list()
         for v in self._variables_list:
             pos=len(GlobalData._class_variables_list)
-            name="act:"+str(self.get_action_id())+"_"+v
+            name=str(self.get_name())+"_"+v
             GlobalData._class_variables_list.append(name)
             variables_indexes.append(pos)
+            if v is APPLY_ACT_STR:
+                self._apply_act_variable_pos=pos
+
         self._variables_indexes=tf.constant(variables_indexes, dtype=tf.int32)
 
 
@@ -1018,6 +1048,12 @@ class TfAction(TfLiftedAction):
 
     def get_variables_indexes(self):
         return self._variables_indexes
+    
+    def get_variable_use_action_index(self):
+        """
+        Returns the index of the variable used to indicate if the action is applied.
+        """
+        return self._apply_act_variable_pos
 
     def get_effects_pos(self):
         return self._act_effects_pos_list

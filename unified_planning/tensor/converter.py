@@ -42,11 +42,11 @@ class SympyToTensorConverter(ABC):
         """
 
         if(DEBUG>4):
-            print("..convert")
+            tf.print("..convert")
         #result= self._tensor_convert(sympy_expr,predicates_indexes, are_prec_satisfied)
         result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, state_values, are_prec_satisfied)
         if(DEBUG>4):
-            print("Converter Result:", result)
+            tf.print("Converter Result:", result)
         return result
     
     # Wrap the conversion into a tf.function
@@ -88,7 +88,7 @@ class SympyToTensorConverter(ABC):
             #f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules={"tensorflow": SympyToTfConverter.sympy_to_tensor_map})
             need_lambdify=True
         
-        #@tf.function XXXXX
+        #@tf.function #XXXXX
         def tf_func(indexes,state_values,var_indexes, var_values ):
             # Ensure that the number of indexes matches the number of free symbols.
             #if len(indexes) < len(free_symbols):
@@ -96,8 +96,11 @@ class SympyToTensorConverter(ABC):
         
             # Extract selected tensor elements using the provided indexes.
             #selected =[tensor[indexes[i]] for i in arg_indexes]  # [tensor[i] for i in arg_indexes
-                 
+            if not GlobalData.use_concrete_functions:
+                tf.print("Please Comment tf.function")
+
             if need_lambdify:
+                #tf.print("..Lambdify: ", sympy_expr, " indexes: ", indexes, " arg_indexes: ", arg_indexes, " arg_names: ", arg_names)
                 concatenated = tf.concat([tf.gather(state_values, tf.gather(indexes, arg_indexes)),  tf.gather(var_values, tf.gather(var_indexes, var_arg_indexes))], axis=0)
                 selected= tf.unstack(concatenated)
                 result=f_lambdified(*selected)
@@ -108,13 +111,13 @@ class SympyToTensorConverter(ABC):
                     new_indexes=[]
                 else:
                     new_indexes= tf.gather(indexes, arg_indexes)
-                print("..Lambdify: ", sympy_expr, " indexes: ", new_indexes)
+                tf.print("..Lambdify: ", sympy_expr, " indexes: ", new_indexes)
                 keys=[ GlobalData._class_tensor_state.get_key(i) for i in new_indexes]
                 
                 if need_lambdify:
-                    print("Selected: ", selected)
-                print("Keys: ", keys)
-
+                    tf.print("Selected: ", selected)
+                tf.print("Keys: ", keys)
+                tf.print("Result: ", result,"\n")
             # Evaluate the expression using the lambdified function.
             return result
         
@@ -132,14 +135,14 @@ class SympyToTensorConverter(ABC):
             TensorFlow Tensor: The resulting TensorFlow tensor.
         """
         if(DEBUG>4):
-            print("..convert")
+            tf.print("..convert")
 
         #result= SympyToTensorConverter.tensor_convert(sympy_expr,predicates_indexes, state, are_prec_satisfied)
         result= SympyToTensorConverter.tensor_convert_it(sympy_expr,predicates_indexes, are_prec_satisfied)
         #result= tensor_convert(sympy_expr, are_prec_satisfied, self.state)
 
         if(DEBUG>4):
-            print("Converter Result:", result)
+            tf.print("Converter Result:", result)
         return result
 
 
@@ -197,7 +200,7 @@ class SympyToTensorConverter(ABC):
 
         value_str=""
         if(DEBUG>6):
-            print("..compute_effect_value: ", effect.fluent.get_name())
+            tf.print("..compute_effect_value: ", effect.fluent.get_name())
 
         sympy_expr_sat = self.when_sympy_expr_not_inserted(effect, TF_SAT)
         
@@ -213,8 +216,8 @@ class SympyToTensorConverter(ABC):
 
         result = self.convert(sympy_expr, are_prec_satisfied)      
         if(DEBUG>3):
-            print("Effect value: ", value_str)
-            print("Result: ", result)
+            tf.print("Effect value: ", value_str)
+            tf.print("Result: ", result)
             os.sync()
 
         # Dynamically evaluate the operation string in the given scope
@@ -231,7 +234,7 @@ class SympyToTensorConverter(ABC):
         '''
 
         if(DEBUG>6):
-            print("..compute_effect_value: ", effect.fluent.get_name())
+            tf.print("..compute_effect_value: ", effect.fluent.get_name())
 
         if (are_prec_satisfied == TF_SAT):
             sympy_expr = effect.sympy_expr_sat
@@ -241,7 +244,7 @@ class SympyToTensorConverter(ABC):
         result= self.convert(sympy_expr, are_prec_satisfied)
 
         if(DEBUG>3):
-            print("Result: ", result)
+            tf.print("Result: ", result)
             os.sync()
         return result
 
@@ -252,7 +255,7 @@ class SympyToTensorConverter(ABC):
             bool]):
         value_str = ""
         if(DEBUG>6):
-            print("..compute_condition_value")
+            tf.print("..compute_condition_value")
         if condition.node_type == OperatorKind.LT:
             value_str = str(condition.args[1])+'-'+str(condition.args[0])
         elif condition.node_type == OperatorKind.LE:
@@ -348,7 +351,7 @@ class SympyToTensorConverter(ABC):
             TensorFlow Tensor: The resulting tensor.
         """
         if DEBUG>5:
-            print("..t_convert: ", node, " predicates_indexes: ", predicates_indexes)
+            tf.print("..t_convert: ", node, " predicates_indexes: ", predicates_indexes)
     
         if isinstance(node, tf.Tensor):
             value = node
@@ -361,14 +364,14 @@ class SympyToTensorConverter(ABC):
             node_name = node.name
             lookup_key = tf.constant(node_name, dtype=tf.string)
             if DEBUG > 4:
-                print("..tensor_convert:", node_name)
+                tf.print("..tensor_convert:", node_name)
             if node_name == ARE_PREC_SATISF_STR:
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
                 value=SympyToTfConverter.extract_from_lifted(lookup_key, predicates_indexes,state)
             elif tf.not_equal(state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
-                    print("Node:", node_name, "in state:", state[node_name])
+                    tf.print("Node:", node_name, "in state:", state[node_name])
                 value = state.lookup(lookup_key)
             else:
                 value = TF_UN_SAT
@@ -401,7 +404,7 @@ class SympyToTensorConverter(ABC):
             raise ValueError(f"Unsupported node type: {type(node)}")
         
         if DEBUG > 5:
-            print(str(node), ":=", value)
+            tf.print(str(node), ":=", value)
         
         return value
 
@@ -418,7 +421,7 @@ class SympyToTensorConverter(ABC):
             TensorFlow Tensor: The resulting tensor.
         """
         if DEBUG>5:
-            print("..t_convert: ", GlobalData._class_cond_effects_list[node_condition].sympy_expr, " predicates_indexes: ", predicates_indexes)
+            tf.print("..t_convert: ", GlobalData._class_cond_effects_list[node_condition].sympy_expr, " predicates_indexes: ", predicates_indexes)
     
         with tf.device(DEVICE):
             node=GlobalData._class_cond_effects_list[node_condition].sympy_expr
@@ -510,14 +513,14 @@ class SympyToTensorConverter(ABC):
             node_name = node.name
             lookup_key = tf.constant(node_name, dtype=tf.string)
             if DEBUG > 4:
-                print("..tensor_convert:", node_name)
+                tf.print("..tensor_convert:", node_name)
             if node_name == ARE_PREC_SATISF_STR:
                 value = are_prec_satisfied
             elif node_name.startswith(LIFTED_STR):
                 value=self._extract_from_lifted(lookup_key, predicates_indexes, state_values)
             elif tf.not_equal(self.state.lookup(lookup_key), MISSING_VALUE): 
                 if DEBUG > 5:
-                    print("Node:", node_name, "in state:", self.state[node_name])
+                    tf.print("Node:", node_name, "in state:", self.state[node_name])
                 value = self.state.lookup(lookup_key)
             else:
                 value = tf.constant(-1.0)
@@ -550,7 +553,7 @@ class SympyToTensorConverter(ABC):
             raise ValueError(f"Unsupported node type: {type(node)}")
         
         if DEBUG > 5:
-            print(str(node), ":=", value)
+            tf.print(str(node), ":=", value)
         
         return value
     
@@ -562,9 +565,9 @@ class SympyToTensorConverter(ABC):
         state=SympyToTfConverter.get_curr_state()
 
         if DEBUG > 4:
-            print("Fluent: ", name," val: ", state.lookup(name))
+            tf.print("Fluent: ", name," val: ", state.lookup(name))
         if DEBUG > 6:          
-            printf(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
+            tf.printf(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
         return self.state.lookup(name)
 
 
@@ -576,9 +579,9 @@ class SympyToTensorConverter(ABC):
         #state=SympyToTfConverter.get_curr_state()
         value=state_values[indx]
         if DEBUG > 4:
-            print("Fluent: ", node_name," val: ", value)
+            tf.print("Fluent: ", node_name," val: ", value)
         if DEBUG > 6:          
-            print(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
+            tf.print(" Pos: ", pos, "Predicates indexes: ", predicates_indexes)
         return value
 
 
@@ -607,7 +610,7 @@ class SympyToTfConverter(SympyToTensorConverter):
             sp.Min: tf.minimum,  # ReLU equivalent for Max
             sp.Pow: tf.pow,      # Add the pow function mapping
             sp.sign: tf.sign,
-            Heaviside:  tf_differentiable_heaviside,
+            Heaviside:  d_heaviside,
         }
         
     sympy_to_tensor_map = { #XX only this or previous
@@ -619,7 +622,7 @@ class SympyToTfConverter(SympyToTensorConverter):
             sp.Min: tf.minimum,  # ReLU equivalent for Max
             sp.Pow: tf.pow,      # Add the pow function mapping
             sp.sign: tf.sign,
-            Heaviside:  tf_differentiable_heaviside,
+            Heaviside:  d_heaviside,
         }
     def negativeRelu(self, x):
         """
