@@ -6,7 +6,7 @@ import inspect
 from tensorflow.lookup.experimental import DenseHashTable
 
 # Activate debug mode
-DEBUG = 6
+DEBUG = 0 #0: no debug, 1: basic, 3: more, 6: very detailed
 
 UNSAT_PENALTY=tf.constant(1000.0, dtype=tf.float32)
 DEVICE='/CPU:0'
@@ -96,7 +96,7 @@ class GlobalData():
     apply_action_fn_list=list() # List to store the apply action lamba functions
     tensor_state=None
     metric_pos=-1
-    use_concrete_functions=False #True 
+    use_concrete_functions=True #False  
 
     def _insert_in_map(keys, table_kv, list_vk, value=None):
         assigned_values = []  # List to store the incremented values

@@ -152,11 +152,12 @@ class TensorAction(ABC):
         return self._predicates_list
     
 
-    def store_condition(prec, converter, predicates_list=None, variables_list=[]): # prec: up.model.Precondition): CHECK
+    def store_condition(prec, converter, predicates_list=None, variables_list=None): # prec: up.model.Precondition): CHECK
         """
         Store a precondition in the class list and map if it does not already exist.
         """
-
+        if variables_list is None:
+            variables_list = []
 
         fl_name = prec.get_name()
         prec_str= converter.get_condition_str(prec)
@@ -498,7 +499,14 @@ class TfLiftedAction (TensorAction):
             #]
             
             if GlobalData.use_concrete_functions: # XXXXX
-                concrete_funct=self.apply_action_funct.get_concrete_function(tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32),tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32))
+                concrete_funct=self.apply_action_funct.get_concrete_function(
+                    tf.TensorSpec(shape=[None], dtype=tf.int32),   # predicates_indexes
+                    tf.TensorSpec(shape=[None], dtype=tf.float32), # state_values
+                    tf.TensorSpec(shape=[None], dtype=tf.int32),   # variables_indexes
+                    tf.TensorSpec(shape=[None], dtype=tf.float32), # variables_values
+                    tf.TensorSpec(shape=(), dtype=tf.int32)    # use_action_index
+                ) 
+                #self.apply_action_funct.get_concrete_function(tf.TensorSpec(shape=(None,), dtype=tf.int32), tf.TensorSpec(shape=(None,), dtype=tf.float32),tf.TensorSpec(shape=(None,), dtype=tf.int32), tf.TensorSpec(shape=(None,), dtype=tf.float32))
                 liftedData.set_concrete_funct(concrete_funct)
                 self.apply_action_concrete_funct=concrete_funct 
             
@@ -863,7 +871,7 @@ class TfLiftedAction (TensorAction):
     
     # Wrap the conversion into a tf.function
     def apply_TfLiftedAction_function(act_indx):
-        #@tf.function(input_signature=[tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32)]) #XXXXXX
+        @tf.function(input_signature=[tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=[None], dtype=tf.int32), tf.TensorSpec(shape=[None], dtype=tf.float32), tf.TensorSpec(shape=(), dtype=tf.int32)]) #XXXXXX
         def apply_funct(predicates_indexes, state_values, variables_indexes, variables_values,use_action_index=-1):
             if not GlobalData.use_concrete_functions:
                 tf.print("Please Comment tf.function")

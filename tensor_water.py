@@ -161,8 +161,8 @@ def change_initial_state(plan, initial_state):
   
   return state_values
 iter= tf.Variable(0, dtype=tf.int32) 
-@tf.function #(reduce_retracing=True) #(experimental_relax_shapes=True)  # #(jit_compile=True)
-def execute(plan, initial_state_values, variables_values):
+#@tf.function #(reduce_retracing=True) #(experimental_relax_shapes=True)  # #(jit_compile=True)
+def  execute(plan, initial_state_values, variables_values):
   iter.assign_add(1)
   if DEBUG>=0:
     tf.print("Execute iter: ", iter)
@@ -250,7 +250,7 @@ get_memory()
 # Start profiling
 
 # Start TensorFlow Profiler
-TBOARD= True #False
+TBOARD= False
 use_callgraph = False
 use_cProfile = False
 

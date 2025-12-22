@@ -75,7 +75,7 @@ class SympyToTensorConverter(ABC):
 
         var_arg_indexes =  tf.constant([int(name.split('_VAR_')[-1]) for name in arg_names if '_VAR_' in name], dtype=tf.int32)
         # Create a lambda function using sympy.lambdify with TensorFlow as backend.
-        need_lambdify=False
+        local_need_lambdify=False
         
         if isinstance(sympy_expr, sympy.logic.boolalg.BooleanTrue):
             f_lambdified = lambda : TF_SAT
@@ -86,9 +86,9 @@ class SympyToTensorConverter(ABC):
         else:
             f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules="tensorflow")
             #f_lambdified = sympy.lambdify(free_symbols, sympy_expr, modules={"tensorflow": SympyToTfConverter.sympy_to_tensor_map})
-            need_lambdify=True
+            local_need_lambdify=True
         
-        #@tf.function #XXXXX
+        @tf.function #XXXXX
         def tf_func(indexes,state_values,var_indexes, var_values ):
             # Ensure that the number of indexes matches the number of free symbols.
             #if len(indexes) < len(free_symbols):
@@ -99,22 +99,28 @@ class SympyToTensorConverter(ABC):
             if not GlobalData.use_concrete_functions:
                 tf.print("Please Comment tf.function")
 
-            if need_lambdify:
+            if local_need_lambdify:
                 #tf.print("..Lambdify: ", sympy_expr, " indexes: ", indexes, " arg_indexes: ", arg_indexes, " arg_names: ", arg_names)
                 concatenated = tf.concat([tf.gather(state_values, tf.gather(indexes, arg_indexes)),  tf.gather(var_values, tf.gather(var_indexes, var_arg_indexes))], axis=0)
                 selected= tf.unstack(concatenated)
                 result=f_lambdified(*selected)
             else:
                 result=f_lambdified()
-            if DEBUG>3:
+            if False & DEBUG>3:
                 if len(arg_indexes)<=0:
                     new_indexes=[]
+                    keys=[]
                 else:
                     new_indexes= tf.gather(indexes, arg_indexes)
+                    keys = tf.map_fn(lambda i: GlobalData._class_tensor_state.get_key(i),new_indexes,dtype=tf.string )
+                    #keys1=[ GlobalData._class_tensor_state.get_key(i) for i in new_indexes]
+                    #if keys1!=keys.numpy().tolist():
+                    #    tf.print("Error in keys extraction")
+                    #    exit(1)
+
                 tf.print("..Lambdify: ", sympy_expr, " indexes: ", new_indexes)
-                keys=[ GlobalData._class_tensor_state.get_key(i) for i in new_indexes]
-                
-                if need_lambdify:
+ 
+                if local_need_lambdify:
                     tf.print("Selected: ", selected)
                 tf.print("Keys: ", keys)
                 tf.print("Result: ", result,"\n")
@@ -645,8 +651,14 @@ class SympyToTfConverter(SympyToTensorConverter):
     def _get_constant(self, node): 
         #tf.print("Node: ", node)
         return float(node)
-        #return tf.constant(float(node), dtype=tf.float32)
-    
+
+    def _is_tensor(self, node):
+        return isinstance(node, tf.Tensor)
+
+    @staticmethod
+    def is_tensor(node):
+        return isinstance(node, tf.Tensor)
+
     def _is_tensor(self, node):
         return node is tf.Tensor
     
@@ -656,5 +668,3 @@ class SympyToTfConverter(SympyToTensorConverter):
         return float(node) 
         #return tf.constant([float(node)], dtype=tf.float32)
     
-    def is_tensor( node):
-        return node is tf.Tensor

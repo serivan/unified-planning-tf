@@ -48,6 +48,7 @@ class TensorPlan(ABC):
 
         self.problem = problem
         self.goal_list=[]
+        self.variables=[]
 
        # Update the metric value if the preconditions are not 
         self._problem_metric=self.problem.quality_metrics[0]
@@ -181,10 +182,11 @@ class TensorPlan(ABC):
 
                 if pos>=0:   
                     #state_values.scatter_nd_add(indices=[[pos]], updates=[value]) #RRRRR
+                    orig=float(state_values[int(pos)])
                     state_values = tf.tensor_scatter_nd_add(state_values, indices=[[pos]], updates=[value])
                     
                     if DEBUG>5:
-                        tf.print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
+                        tf.print("Update: ", self.tensor_state.get_key(int(pos)), "-- orig: ", orig, " delta: ", float(value), "new: ", float(state_values[int(pos)]))
                 else:
                     if DEBUG>5:
                         tf.print("NUpdate: ", pos, ": ", float(value))
@@ -235,15 +237,8 @@ class TensorPlan(ABC):
                 if DEBUG>1:
                     tf.print("Action in ", step, " is NOT applicable: ", tensor_action.get_name())
      
-            for pos,value in zip(indexes.numpy(),values.numpy()):
-                if pos>=0:   
-                    state_values [pos]=value
-                    if DEBUG>5:
-                        tf.print("Update: ", self.tensor_state.get_key(int(pos)), ": ", float(value), "new: ", float(state_values[int(pos)]))
-                else:
-                    if DEBUG>5:
-                        tf.print("NUpdate: ", pos, ": ", float(value))
-                
+            indices = tf.reshape(indexes, (-1, 1))  # shape [N,1]
+            state_values = tf.tensor_scatter_nd_update(state_values, indices, values)    
             
         goals_valid, metric_add=self.check_goals(state_values)
         if DEBUG>-1:
@@ -277,7 +272,7 @@ class TensorPlan(ABC):
            
             if value < 0:
                 satisfied=-1 # Needed for tf function; use a break?
-                metric_value_add +=  UNSAT_PENALTY    *  value *( -1.0 )
+                metric_value_add +=  UNSAT_PENALTY    *  value *( -100.0 )
                 if DEBUG>1:
                     tf.print("Goal unsatisfied: ", GlobalData._class_conditions_list[goal].name, " indx: ", goal,", value: ",value, " -- metric add: ", metric_value_add,"\n")
             else:
@@ -395,16 +390,21 @@ class TfPlan(TensorPlan):
         #Apply effects
         for step in range(max_size):    
             indexes=self.effects_pos_actions_sequence_list[step]
+           
             if tf.shape(indexes)[0] > 0:  # Apply updates in batch, we update here the state_values tensor and not in apply_action in order to use input_shape in tf.function
                 #state_values.scatter_nd_add(indices=indexes, updates=values[step]) #RRRRR
+                
                 state_values = tf.tensor_scatter_nd_add(state_values, indices=indexes, updates=values[step])
                 
             if DEBUG>2:
                 tf.print("\nApply Action in ", step, " name: ", self.actions_sequence[step].get_name(), " act: ",self.actions_sequence[step])
                 #tf.print("Updates:",indexes, " --- ", values)
-                for(indx, val) in zip(indexes,values[step]):
+                #for(indx, val) in zip(indexes,values[step]):
+                for i in tf.range(tf.shape(indexes)[0]):
+                    indx = indexes[i]
+                    val  = values[step][i]
                     if indx>=0:
-                        tf.print("Update: ", self.tensor_state.get_key(int(indx)), ": ", float(val), "new: ", float(state_values[int(indx)]))
+                        tf.print("Update: ", self.tensor_state.get_key(int(indx)), " delta: ", float(val), "new: ", float(state_values[int(indx)]))
                     else:
                         tf.print("NUpdate: ", indx, ": ", float(val))
                 tf.print("State metric: ", state_values[GlobalData.pos_metric_expr])
@@ -501,5 +501,15 @@ class TfPlan(TensorPlan):
         return tf.gather(state_values,GlobalData.pos_metric_expr), tf.gather(state_values,GlobalData.pos_are_prec_sat),prec_satified,goals_valid,state_values 
     
     def generate_variables_values(self):
-        return tf.Variable( tf.zeros(shape=(len(GlobalData._class_variables_list),)), dtype=tf.float32,trainable=True) # [tf.Variable(0, dtype=tf.float32,trainable=True) for _ in range(len(GlobalData._class_variables_list))])
+        self.variables=  tf.Variable( tf.zeros(shape=(len(GlobalData._class_variables_list),)), dtype=tf.float32,trainable=True) # [tf.Variable(0, dtype=tf.float32,trainable=True) for _ in range(len(GlobalData._class_variables_list))])
         #return tf.Variable(tf.fill([len(GlobalData._class_variables_list)], -1.0), dtype=tf.float32, trainable=True)  # Initialize with -1 instead of zeros
+        return self.variables
+    
+    def generate_variables_values_sequential(self):
+        variables_values = []
+        for act in self.plan.actions:
+            act_vars = tf.Variable( tf.zeros(shape=(len(GlobalData._class_variables_list),)), dtype=tf.float32,trainable=True) 
+            variables_values.append(act_vars)
+
+        self.variables= variables_values 
+        return self.variables

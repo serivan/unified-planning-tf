@@ -118,7 +118,15 @@ class TensorFluent(ABC):
         """
         if not isinstance(other, TensorFluent):
             return False
-        return self._fluent == other._fluent and tf.reduce_all(tf.equal(self.get_value(), other.get_value()))  and self._activation_function == other._activation_function
+        return (
+            self._up_fluent == other._up_fluent and
+            tf.reduce_all(tf.equal(self.get_value(), other.get_value())) and
+            self._activation_function == other._activation_function
+        )
+
+        #if not isinstance(other, TensorFluent):
+        #    return False
+        #return self._fluent == other._fluent and tf.reduce_all(tf.equal(self.get_value(), other.get_value()))  and self._activation_function == other._activation_function
 
 
     def __hash__(self):

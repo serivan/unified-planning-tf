@@ -204,7 +204,7 @@ problem.add_fluent(large_container)
 problem.add_fluent(small_container)
 problem.add_fluent(cost)
 problem.add_action(fill_largei)
-problem.add_action(fill_large_neg)
+#problem.add_action(fill_large_neg)
 #problem.add_action(fill_larged)
 #problem.set_initial_value(large_container, tf.constant(20))
 problem.set_initial_value(large_container, 70)
@@ -319,81 +319,190 @@ def change_initial_state(plan, initial_state):
   
   return state_values
 
+def generate_variables_values(plan):
+  variables_values = []
+  for act in plan.actions:
+      tf_action = TfAction(act.action, plan.tensor_state)
+      act_vars = tf_action.generate_variables_values()
+      variables_values.extend(act_vars)
 
+  plan.variables= tf.Variable(variables_values, dtype=tf.float32, trainable=True)
 
-#@tf.function
-def plan_sequence(initial_state, plan, learning_rate=0.1, steps=100):
+@tf.function(
+    reduce_retracing=True,
+    experimental_relax_shapes=True
+)
+def plan_sequence(initial_state, plan, learning_rate=0.1, steps=1000):
+  steps = tf.convert_to_tensor(steps, dtype=tf.int32)
+
   seq_plan = plan  # assuming `plan` is actually a TensorPlan object
-  initial_state = change_initial_state(seq_plan, initial_state)
-
-  variables_values1 = seq_plan.generate_variables_values()
-  variables_values2 = seq_plan.generate_variables_values()
-  variables_values = tf.Variable([variables_values1, variables_values2], axis=0)
-  #variables_values=variables_values1+variables_values2
+  state = change_initial_state(seq_plan, initial_state)
   
-  
-  var_pos = seq_plan.tensor_state.get_key_position("large_container")
-  var = tf.gather(initial_state, var_pos)
+  # Assume: one tf.Variable per action (e.g. plan.variables = [w0, w1, ..., wN])
+  # Using tuple is slightly friendlier for tf.function than a Python list that changes.
+  variables_values = tuple(plan.variables)
 
-  tf.print("===================================================")
-  tf.print("Orig Vars:", variables_values)
-  variables_values_copy = tf.Variable(variables_values.numpy(), dtype=variables_values.dtype, trainable=True)
-  prec_satisfied=1
-  goals_satisfied=1
-  for step in range(steps):
+  # These will hold values from the last iteration for logging/return
+  loss= tf.constant(0.0, dtype=tf.float32)
+  are_prec_sat= tf.constant(0.0, dtype=tf.float32)
+  goals_valid= tf.constant(0, dtype=tf.int32)
+
+  # Variables to keep track of the "best so far"
+  best_loss = tf.constant(float("inf"), dtype=tf.float32)
+  # Best snapshot of each variable; tensors, not Variables
+  best_vars = [tf.identity(v) for v in variables_values]
+
+  #tf.print("===================================================")
+  #tf.print("Orig Vars:", variables_values)
+  
+  for step in tf.range(steps):
+    state, are_prec_sat, goals_valid, loss, clipped_grads = execute_step(state, plan, variables_values)
+
+    # SGD update per ogni azione/peso
+    for v, g in zip(variables_values, clipped_grads):
+      v.assign_sub(learning_rate * g)
+
+  
+    # Check if this step has a better loss than any previous one
+    is_better = loss < best_loss
+
+    # Branch that *replaces the entire snapshot* when loss improves
+    def update_best():
+        # Copy the full content of each variable
+        new_best_vars = [tf.identity(v) for v in variables_values]
+        new_best_loss = loss
+        return new_best_loss, new_best_vars
+
+    def keep_best():
+        # Keep previous best_loss and best_vars unchanged
+        return best_loss, best_vars
+
+    # Use tf.cond so that either we fully update all best_vars
+    # or we keep them as they are (no mixing per-element).
+    best_loss, best_vars = tf.cond(is_better, update_best, keep_best)
+
+
+  # After the loop: restore the best configuration of variables_values
+  for v, best_v in zip(variables_values, best_vars):
+      v.assign(best_v)
+
+  # DEBUG finale (solo dopo l’ultima iterazione)
+  tf.print("Step", steps - 1, "- Loss:", loss)
+  tf.print("Prec sat:", are_prec_sat)
+  tf.print("Goals valid:", goals_valid)
+  tf.print("Best loss:", best_loss)
+
+  # If you really need final variable values / state, log them once here.
+  # Avoid per-element loops; this keeps the compiled graph small and faster.
+  tf.print("Final variables:", variables_values)
+  tf.print("Final state (first 10 elements):", state[:10])
+
+  # Stampa valori finali dei "pesi" per azione
+  #for i, (name, v) in enumerate(zip(GlobalData._class_variables_list, variables_values)):
+  #  tf.print("Variable", i, "name:", name, "value:", v)
+
+  # Stampa stato finale
+  #for i in range(seq_plan.tensor_state.size()):
+  #  tf.print("key:", seq_plan.tensor_state.get_key(i), "=", state[i])
+
+  tf.print("===================================================")      
+     
+  
+  return loss
+
+
+@tf.function
+def execute_step(state, plan, variables_values, clip_norm=10.0):
+    """
+    Single optimization step:
+    - Performs a forward pass through all actions in the plan.
+    - Accumulates a total loss.
+    - Applies goal checking on the final state.
+    - Computes gradients w.r.t. all variables_values.
+    - Applies global-norm gradient clipping and returns clipped gradients.
+    """
+
+    #return state, 1, 1, tf.constant(0.0), variables_values
+    with tf.GradientTape() as tape:
+        # Watch all variables (one per action)
+        tape.watch(variables_values)
+
+        current_state = state
+        total_loss = tf.constant(0.0, dtype=tf.float32)
+        are_prec_sat = tf.constant(1, dtype=tf.int32)  # example default
+
+        # Forward pass through all actions, like a chain of layers
+        for action_vars in variables_values:
+            # plan.forward_step is assumed to have the same interface as before:
+            #   loss_i, are_prec_sat, new_state = plan.forward_step(state, vars)
+            loss_i, are_prec_sat, current_state = plan.forward_step(
+                current_state, action_vars
+            )
+            # Aggregate the loss (here we sum, but you can change aggregation if needed)
+            total_loss = total_loss + loss_i
+
+        # Goal checking on the final state
+        goals_valid, metric_value_add = plan.check_goals(
+            current_state, variables_values[-1]
+        )
+
+        if goals_valid <= 0:
+            # Update the metric in the state and use it as the final loss
+            state_values = tf.tensor_scatter_nd_add(
+                current_state,
+                indices=[[GlobalData.pos_metric_expr]],
+                updates=[metric_value_add],
+            )
+            total_loss = tf.gather(state_values, GlobalData.pos_metric_expr)
+
+    # Compute gradients with respect to all action variables
+    grads = tape.gradient(total_loss, variables_values)
+
+    # Post-process gradients (handle None and IndexedSlices)
+    processed_grads = []
+    for v, g in zip(variables_values, grads):
+        # If gradient is None, replace with zeros of the same shape
+        if g is None:
+            g = tf.zeros_like(v)
+        # Convert IndexedSlices to dense tensor when needed
+        elif isinstance(g, tf.IndexedSlices):
+            g = tf.convert_to_tensor(g)
+        processed_grads.append(g)
+
+    # Global norm gradient clipping
+    clipped_grads, _ = tf.clip_by_global_norm(processed_grads, clip_norm)
+
+    # Return:
+    # - current_state: state after applying all actions
+    # - are_prec_sat: last precondition satisfaction flag
+    # - goals_valid: result of goal checking on the final state
+    # - total_loss: final scalar loss
+    # - clipped_grads: list of clipped gradients aligned with variables_values
+    return current_state, are_prec_sat, goals_valid, total_loss, clipped_grads
+
+
+@tf.function
+def execute_step_orig(initial_state, plan, variables_values):
+    print("Execute gradient step")
+    #return initial_state, 1, initial_state, tf.constant(0.0), variables_values[0], variables_values[1]
     with tf.GradientTape(persistent=True) as tape:
-      tape.watch(variables_values1)
-      tape.watch(variables_values2)
+      tape.watch(variables_values[0])
+      tape.watch(variables_values[1])
       state=initial_state
       #loss, are_prec_sat, prec_satisfied, goals_satisfied, new_state = plan.forward(initial_state, variables_values)
-      loss1, are_prec_sat, state = plan.forward_step(initial_state, variables_values1)
-      loss2, are_prec_sat, new_state = plan.forward_step(state, variables_values2)
-      loss = loss2  # or however you want to aggregate it
-    grad1 = tape.gradient(loss, variables_values1)
-    grad2 = tape.gradient(loss, variables_values2)
+      loss1, are_prec_sat, state = plan.forward_step(initial_state, variables_values[0])
+      loss2, are_prec_sat, new_state = plan.forward_step(state, variables_values[1])
+
+      goals_valid,metric_value_add=plan.check_goals(new_state, variables_values[1])
+      if goals_valid<=0:
+        state_values = tf.tensor_scatter_nd_add(new_state, indices=[[GlobalData.pos_metric_expr]], updates=[metric_value_add])
+        loss=tf.gather(state_values,GlobalData.pos_metric_expr)      
+      else:
+        loss = loss2  # or however you want to aggregate it
+    grad1 = tape.gradient(loss, variables_values[0])
+    grad2 = tape.gradient(loss, variables_values[1])
     del tape
-
-    # Convert IndexedSlices to dense if necessary
-    if isinstance(grad1, tf.IndexedSlices):
-      grad1 = tf.convert_to_tensor(grad1)
-      grad2 = tf.convert_to_tensor(grad2)
-
-    # Clip gradients by global norm (recommended)
-    clipped_grad1, _ = tf.clip_by_global_norm([grad1], clip_norm=10.0)
-    clipped_grad1 = clipped_grad1[0]  # unpack list
-
-    if DEBUG> 0:
-      variables_values_copy = tf.Variable(variables_values1.numpy(), dtype=variables_values1.dtype, trainable=True)
-
-    # Gradient descent update
-    variables_values1.assign_sub(learning_rate * clipped_grad1)
-
-    # Clip gradients by global norm (recommended)
-    clipped_grad2, _ = tf.clip_by_global_norm([grad2], clip_norm=10.0)
-    clipped_grad2 = clipped_grad2[0]  # unpack list
-
-    # Gradient descent update
-    variables_values2.assign_sub(learning_rate * clipped_grad2)
-
-    if True or step % 10 == 0 or step == steps - 1:
-      tf.print(f"Step {step} - Loss: {loss.numpy():.4f}")
-      tf.print(step, " - Gradient:", [grad1,grad2], ", clipped:", [clipped_grad1,clipped_grad2])
-      tf.print("Prec sat:", are_prec_sat)
-      #tf.print("Vars:", variables_values)
-
-      for i in range(len(GlobalData._class_variables_list)):
-        tf.print("Variable", i, " name: ", GlobalData._class_variables_list[i], ", current: ", variables_values_copy[i], ", new value: ", variables_values1[i], " new: ", variables_values2[i])
-
-      for i in range(seq_plan.tensor_state.size()):
-        if state[i] != new_state[i]:
-          tf.print("key1: ",seq_plan.tensor_state.get_key(i), "=", state[i])
-        tf.print("key2: ",seq_plan.tensor_state.get_key(i), "=", new_state[i])
-      tf.print("===================================================")
-
-      tf.print("Prec sat:", prec_satisfied)
-      tf.print("Goals sat:", goals_satisfied)
-      os.sync()
-  return loss
+    return state,are_prec_sat,new_state,loss,grad1,grad2
 
 
 
@@ -512,9 +621,9 @@ tf.print()
 start_time = time.time()
 #tf.print("Actions", act_list)
 state_values=seq_plan.tensor_state.get_initial_state_values()
-variables_values=seq_plan.generate_variables_values()
+variables_values=seq_plan.generate_variables_values_sequential()
 
-seq_plan.forward(state_values,variables_values)
+seq_plan.forward(state_values,variables_values[0])
 state=seq_plan.get_state_values() 
 
 end_time = time.time()
@@ -547,7 +656,7 @@ tf.print("2.Execution time of act_sequence:", end_time - start_time, "seconds")
 #  tf.print("Not Equal")
 
 tf.print()
-exit()
+#exit()
 
 #tensor_state.set_attr(large_container.name, 40)
 #init_state=tensor_state.convert_to_Tf()
